@@ -504,6 +504,24 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .plug-room { margin: 0 0 14px; font-size: 12.5px; color: var(--muted); }
 
+/* padlock toggle: while locked, the switch below is fully disabled in both
+   directions — arming needs no ceremony, but removing the lock requires the
+   "type UNLOCK" popup (#unlock-overlay, wired in app.js). */
+.plug-lock-btn {
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.plug-lock-btn:hover { color: var(--ink-2); background: var(--surface-2); }
+.plug-lock-btn.locked { color: var(--copper); }
+.plug-lock-btn.locked:hover { background: var(--copper-dim); }
+.plug-lock-btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.plug-lock-btn .lock-icon-locked { display: none; }
+.plug-lock-btn.locked .lock-icon-unlocked { display: none; }
+.plug-lock-btn.locked .lock-icon-locked { display: inline; }
+
 .plug-switch {
   display: flex;
   align-items: center;
@@ -534,6 +552,28 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .plug-switch[aria-checked="true"] .switch-thumb { transform: translateX(24px); background: var(--copper); }
 
 .switch-label { font-size: 14px; color: var(--ink-2); }
+
+/* unlock-popup input (#unlock-overlay in index.html) — deliberately uses the
+   critical/red accent (not copper) since this is the one guarded,
+   higher-stakes action in the app */
+.plug-unlock-row { display: flex; gap: 6px; }
+.plug-unlock-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--critical);
+  border-radius: 6px;
+}
+.plug-unlock-input:focus-visible { outline: 2px solid var(--critical); outline-offset: 1px; }
+.plug-unlock-input.shake { animation: unlock-shake 0.3s ease; }
+@keyframes unlock-shake {
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
 
 /* -------------------------------------------------------------- lighting */
 
@@ -576,7 +616,80 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   font-size: 12.5px;
   color: var(--ink-2);
 }
+.light-field[hidden] { display: none; } /* .light-field sets its own display, so [hidden] alone won't win */
 .light-field-label { flex: none; width: 76px; color: var(--muted); }
+
+/* warm/cool vs. full-RGB toggle for a zone's color, plus a live preview chip
+   shared by both — the default is Warmth, since that's the general-use control */
+.light-color-mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--page);
+}
+.color-mode-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.color-mode-btn:hover { color: var(--ink-2); }
+.color-mode-btn.active { color: var(--page); background: var(--copper); font-weight: 700; }
+.color-mode-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.light-color-swatch {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1px solid var(--hairline);
+}
+
+/* warm-amber-to-cool-blue gradient track — the slider's own visual metaphor
+   (real color temperature), independent of the copper accent used elsewhere */
+.light-warmth {
+  flex: 1;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #ff9329, #ffd9a0 35%, #fff4e8 50%, #dce8ff 65%, #9dc4ff);
+  cursor: pointer;
+}
+.light-warmth::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--page);
+  box-shadow: 0 0 0 1px var(--hairline);
+  margin-top: -4px;
+}
+.light-warmth::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #ff9329, #ffd9a0 35%, #fff4e8 50%, #dce8ff 65%, #9dc4ff);
+}
+.light-warmth::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 2px solid var(--page);
+}
+.light-warmth:disabled { opacity: 0.55; cursor: not-allowed; }
+.light-warmth-value {
+  width: 46px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+}
 
 .light-brightness { flex: 1; accent-color: var(--copper); }
 .light-brightness:disabled { accent-color: var(--muted); opacity: 0.6; cursor: not-allowed; }

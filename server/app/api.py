@@ -159,9 +159,17 @@ def device_detail(device_id: int):
 
 @api.post("/devices/<int:device_id>/toggle")
 def device_toggle(device_id: int):
+    """Flip the plug relay. A locked plug refuses ANY toggle (on or off)
+    with 423 — it must be unlocked first via /lock, which is the only place
+    the "type UNLOCK" confirmation lives."""
     plug = poller.plugs.get(device_id)
     if plug is None:
         return jsonify({"error": "no such wifi plug"}), 404
+
+    device = db.get_device(device_id)
+    if device and device.get("locked"):
+        return jsonify({"error": "plug is locked — unlock it first", "locked": True}), 423
+
     try:
         relay_on = plug.toggle()
     except PlugError as exc:
@@ -170,6 +178,28 @@ def device_toggle(device_id: int):
     # Record the new state immediately so the UI doesn't wait a poll cycle.
     db.insert_power_reading(device_id, None, relay_on)
     return jsonify({"relay_on": relay_on})
+
+
+@api.post("/devices/<int:device_id>/lock")
+def device_lock(device_id: int):
+    """Arm/disarm the power-off lock on a plug. Body: {"locked": bool}.
+    Arming needs no ceremony. Disarming an already-locked plug requires
+    {"confirm": "unlock"} (case-insensitive) — that typed confirmation is
+    what actually clears the lock; /toggle itself never accepts a bypass."""
+    device = db.get_device(device_id)
+    if device is None or device["type"] != "wifi_plug":
+        return jsonify({"error": "no such wifi plug"}), 404
+    body = request.get_json(silent=True) or {}
+    locked = body.get("locked")
+    if not isinstance(locked, bool):
+        return jsonify({"error": "locked must be a boolean"}), 400
+    if device.get("locked") and not locked:
+        confirm = body.get("confirm", "")
+        if not isinstance(confirm, str) or confirm.strip().lower() != "unlock":
+            return jsonify({"error": "type UNLOCK to confirm unlocking this plug"}), 423
+    db.set_device_locked(device_id, locked)
+    log.info("Device %d lock set to %s", device_id, locked)
+    return jsonify({"locked": locked})
 
 
 @api.get("/devices/<int:device_id>/power/stats")

@@ -32,12 +32,13 @@ CREATE TABLE IF NOT EXISTS readings (
 CREATE INDEX IF NOT EXISTS idx_readings_metric_ts ON readings (metric, ts);
 
 CREATE TABLE IF NOT EXISTS devices (
-    id   INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL,             -- wifi_plug | wled_zone
-    ip   TEXT,
-    room TEXT,
-    mode TEXT                       -- wled_zone only: manual | auto
+    id     INTEGER PRIMARY KEY,
+    name   TEXT NOT NULL,
+    type   TEXT NOT NULL,           -- wifi_plug | wled_zone
+    ip     TEXT,
+    room   TEXT,
+    mode   TEXT,                    -- wled_zone only: manual | auto
+    locked INTEGER NOT NULL DEFAULT 0  -- wifi_plug only: 1 blocks power-off without confirmation
 );
 
 CREATE TABLE IF NOT EXISTS power_readings (
@@ -92,10 +93,12 @@ def init_db() -> None:
     Path(config.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
-        # migration: 'mode' column added when wled_zone devices were introduced
+        # migrations: columns added after the first schema revision
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(devices)")}
         if "mode" not in cols:
             conn.execute("ALTER TABLE devices ADD COLUMN mode TEXT")
+        if "locked" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
         # legacy name from the first schema revision
         conn.execute("UPDATE devices SET name = 'Plug 1' WHERE name = 'myStrom Plug'")
         for name, ip, room in PLUG_SEEDS:
@@ -306,6 +309,13 @@ def set_device_mode(device_id: int, mode: str) -> None:
     lighting job drives brightness from lux)."""
     with connect() as conn:
         conn.execute("UPDATE devices SET mode = ? WHERE id = ?", (mode, device_id))
+
+
+def set_device_locked(device_id: int, locked: bool) -> None:
+    """wifi_plug only: when locked, /toggle refuses to power the plug off
+    without an explicit confirmation (see api.device_toggle)."""
+    with connect() as conn:
+        conn.execute("UPDATE devices SET locked = ? WHERE id = ?", (1 if locked else 0, device_id))
 
 
 def latest_power(device_id: int) -> dict | None:

@@ -248,6 +248,33 @@
   </div>
 </div>
 
+<!-- Plug unlock confirmation — a locked plug's switch is fully disabled
+     (neither on nor off) until this typed confirmation clears the lock -->
+<div class="detail-overlay" id="unlock-overlay" hidden>
+  <div class="detail-backdrop" id="unlock-backdrop"></div>
+  <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="unlock-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="unlock-title">Unlock plug</h3>
+        <code class="wire-key">CFG</code>
+      </div>
+      <button class="detail-close" id="unlock-close" aria-label="Close">×</button>
+    </header>
+    <p class="settings-hint">This plug is locked so it can't be switched on or off by
+       accident. Type <strong>UNLOCK</strong> to confirm.</p>
+    <form id="unlock-form">
+      <div class="plug-unlock-row">
+        <input type="text" id="unlock-input" class="plug-unlock-input"
+               placeholder="UNLOCK" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="settings-actions">
+        <button type="submit" class="save-btn" id="unlock-submit">Unlock</button>
+        <span class="save-note" id="unlock-note" role="status"></span>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="chart-tooltip" id="chart-tooltip" hidden></div>
 
 <script src="app.js"></script>

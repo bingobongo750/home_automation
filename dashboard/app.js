@@ -150,7 +150,12 @@ function plugPairDOM(device) {
   pair.innerHTML = `
     <article class="card plug-control">
       <header class="card-head">
-        <h3 class="card-label"></h3><code class="wire-key"></code>
+        <code class="wire-key"></code>
+        <button class="plug-lock-btn" type="button" aria-pressed="false"
+                title="Lock to prevent power-off" disabled>
+          <svg class="lock-icon-unlocked" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 7.75-1.5"></path></svg>
+          <svg class="lock-icon-locked" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+        </button>
       </header>
       <p class="plug-room"></p>
       <button class="plug-switch" role="switch" aria-checked="false" disabled>
@@ -182,7 +187,6 @@ function plugPairDOM(device) {
     </article>`;
 
   // device fields are API data — set as text, never markup
-  pair.querySelector(".plug-control .card-label").textContent = device.name;
   pair.querySelector(".plug-control .wire-key").textContent = device.ip || "no ip";
   pair.querySelector(".plug-room").textContent = device.room || "";
 
@@ -192,10 +196,11 @@ function plugPairDOM(device) {
   wireWidget(widget);
 
   const sw = pair.querySelector(".plug-switch");
+  const note = pair.querySelector(".card-note");
+
   sw.addEventListener("click", async () => {
     if (sw.disabled) return;
     sw.disabled = true;
-    const note = pair.querySelector(".card-note");
     try {
       const result = await postJSON(`/api/devices/${device.id}/toggle`);
       applySwitch(pair, Boolean(result.relay_on));
@@ -205,9 +210,30 @@ function plugPairDOM(device) {
     } catch {
       note.textContent = "Couldn't reach the plug — is it powered and on the network?";
     } finally {
-      sw.disabled = false;
+      // Re-enable only if still unlocked — a lock could have landed mid-request.
+      sw.disabled = pair.dataset.locked === "true";
     }
   });
+
+  const lockBtn = pair.querySelector(".plug-lock-btn");
+  lockBtn.addEventListener("click", async () => {
+    if (lockBtn.disabled) return;
+    if (!lockBtn.classList.contains("locked")) {
+      // Arming the lock needs no ceremony — only removing it does.
+      lockBtn.disabled = true;
+      try {
+        await postJSON(`/api/devices/${device.id}/lock`, { locked: true });
+        applyLock(pair, true);
+      } catch {
+        note.textContent = "Couldn't lock the plug — is the backend up?";
+      } finally {
+        lockBtn.disabled = false;
+      }
+    } else {
+      openUnlockDialog(device.id, device.name, pair);
+    }
+  });
+
   return pair;
 }
 
@@ -215,6 +241,20 @@ function applySwitch(pair, on) {
   const sw = pair.querySelector(".plug-switch");
   sw.setAttribute("aria-checked", String(on));
   pair.querySelector(".switch-label").textContent = on ? "On" : "Off";
+}
+
+function applyLock(pair, locked) {
+  pair.dataset.locked = String(locked);
+  const btn = pair.querySelector(".plug-lock-btn");
+  btn.classList.toggle("locked", locked);
+  btn.setAttribute("aria-pressed", String(locked));
+  btn.title = locked ? "Locked — click to unlock before switching" : "Lock to prevent power-off";
+  // Apply immediately (not just on the next poll) so arming/unlocking feels
+  // instant, same fix as the lighting mode-toggle latency bug — but only
+  // once we've actually polled once, so "waiting for first poll" still holds.
+  if (pair.dataset.polled === "true") {
+    pair.querySelector(".plug-switch").disabled = locked;
+  }
 }
 
 function renderPlugs(devices) {
@@ -230,10 +270,14 @@ function renderPlugs(devices) {
       list.appendChild(pair);
       refreshSpark(pair.querySelector(".power-widget"));
     }
+    applyLock(pair, Boolean(device.locked));
+    pair.querySelector(".plug-lock-btn").disabled = false;
+
     const power = device.power;
     if (!power) continue;
+    pair.dataset.polled = "true";
     applySwitch(pair, power.relay_on === 1);
-    pair.querySelector(".plug-switch").disabled = false;
+    pair.querySelector(".plug-switch").disabled = Boolean(device.locked);
     pair.querySelector(".power-widget .value").textContent =
       power.watts === null ? "—" : Number(power.watts).toFixed(1);
     applyAlert(pair.querySelector(".power-widget"),
@@ -251,6 +295,7 @@ function renderPlugs(devices) {
    color/effect stay user-editable in either mode. */
 
 const lightCards = new Map(); // device id -> .light-card element
+const WARMTH_DEFAULT_K = 2700; // typical warm-white home bulb
 
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -259,6 +304,22 @@ function hexToRgb(hex) {
 
 function rgbToHex([r, g, b]) {
   return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+// Approximate black-body RGB for a color temperature in Kelvin (Tanner
+// Helland's fit) — good enough for a pleasant warm/cool slider, not colorimetry.
+function kelvinToRgb(kelvin) {
+  const temp = kelvin / 100;
+  let r, g, b;
+  if (temp <= 66) {
+    r = 255;
+    g = temp <= 19 ? 0 : 99.4708025861 * Math.log(temp) - 161.1195681661;
+  } else {
+    r = 329.698727446 * Math.pow(temp - 60, -0.1332047592);
+    g = 288.1221695283 * Math.pow(temp - 60, -0.0755148492);
+  }
+  b = temp >= 66 ? 255 : temp <= 19 ? 0 : 138.5177312231 * Math.log(temp - 10) - 305.0447927307;
+  return [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))));
 }
 
 function lightCardDOM(device) {
@@ -289,8 +350,21 @@ function lightCardDOM(device) {
         <input type="range" min="0" max="255" class="light-brightness" disabled>
         <span class="light-brightness-value">—</span>
       </label>
-      <label class="light-field">
+      <div class="light-field">
         <span class="light-field-label">Color</span>
+        <div class="light-color-mode" role="group" aria-label="Color mode">
+          <button type="button" class="color-mode-btn active" data-mode="ambient" disabled>Ambient</button>
+          <button type="button" class="color-mode-btn" data-mode="rgb" disabled>Custom</button>
+        </div>
+        <span class="light-color-swatch" aria-hidden="true"></span>
+      </div>
+      <div class="light-field light-warmth-field">
+        <span class="light-field-label"></span>
+        <input type="range" min="2000" max="6500" step="50" value="${WARMTH_DEFAULT_K}" class="light-warmth" disabled>
+        <span class="light-warmth-value">${WARMTH_DEFAULT_K}K</span>
+      </div>
+      <label class="light-field light-rgb-field" hidden>
+        <span class="light-field-label"></span>
         <input type="color" class="light-color" disabled>
       </label>
       <label class="light-field">
@@ -311,8 +385,21 @@ function lightCardDOM(device) {
   card.querySelector(".card-label").textContent = device.name;
   card.querySelector(".wire-key").textContent = device.ip || "no ip";
   card.querySelector(".light-room").textContent = device.room || "";
+  card.querySelector(".light-color-swatch").style.background = rgbToHex(kelvinToRgb(WARMTH_DEFAULT_K));
 
   const status = card.querySelector(".light-status");
+  const swatch = card.querySelector(".light-color-swatch");
+
+  const modeButtons = card.querySelectorAll(".color-mode-btn");
+  modeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      modeButtons.forEach((b) => b.classList.toggle("active", b === btn));
+      const isAmbient = btn.dataset.mode === "ambient";
+      card.querySelector(".light-warmth-field").hidden = !isAmbient;
+      card.querySelector(".light-rgb-field").hidden = isAmbient;
+    });
+  });
 
   const modeToggle = card.querySelector(".mode-toggle");
   modeToggle.addEventListener("click", async () => {
@@ -358,7 +445,26 @@ function lightCardDOM(device) {
     }
   });
 
+  const warmth = card.querySelector(".light-warmth");
+  const warmthValue = card.querySelector(".light-warmth-value");
+  warmth.addEventListener("input", () => {
+    warmthValue.textContent = `${warmth.value}K`;
+    swatch.style.background = rgbToHex(kelvinToRgb(Number(warmth.value)));
+  });
+  warmth.addEventListener("change", async () => {
+    try {
+      applyLightState(card, await postJSON(`/api/devices/${device.id}/state`,
+        { color: kelvinToRgb(Number(warmth.value)) }));
+      status.textContent = "";
+    } catch {
+      status.textContent = "Couldn't reach the zone.";
+    }
+  });
+
   const color = card.querySelector(".light-color");
+  color.addEventListener("input", () => {
+    swatch.style.background = color.value;
+  });
   color.addEventListener("change", async () => {
     try {
       applyLightState(card, await postJSON(`/api/devices/${device.id}/state`,
@@ -409,7 +515,10 @@ function applyLightState(card, state) {
   const brightness = card.querySelector(".light-brightness");
   brightness.value = state.brightness ?? 0;
   card.querySelector(".light-brightness-value").textContent = brightness.value;
-  if (state.color) card.querySelector(".light-color").value = rgbToHex(state.color);
+  if (state.color) {
+    card.querySelector(".light-color").value = rgbToHex(state.color);
+    card.querySelector(".light-color-swatch").style.background = rgbToHex(state.color);
+  }
   if (state.effect !== undefined) card.querySelector(".light-effect").value = String(state.effect);
 }
 
@@ -434,6 +543,8 @@ function renderLighting(devices, latest) {
 
     const status = card.querySelector(".light-status");
     const color = card.querySelector(".light-color");
+    const warmth = card.querySelector(".light-warmth");
+    const colorModeBtns = card.querySelectorAll(".color-mode-btn");
     const effect = card.querySelector(".light-effect");
 
     if (device.light) {
@@ -441,12 +552,16 @@ function renderLighting(devices, latest) {
       // whether a manual edit or the auto job's last tick set it
       applyLightState(card, device.light);
       color.disabled = false;
+      warmth.disabled = false;
+      colorModeBtns.forEach((b) => { b.disabled = false; });
       effect.disabled = false;
       status.textContent = isAuto
         ? `Auto — following ambient light${lux ? ` (${Number(lux.value).toFixed(0)} lx)` : ""}.`
         : "";
     } else {
       color.disabled = true;
+      warmth.disabled = true;
+      colorModeBtns.forEach((b) => { b.disabled = true; });
       effect.disabled = true;
       status.textContent = "Zone unreachable — is it powered and on the network?";
     }
@@ -509,7 +624,8 @@ document.getElementById("detail-close").addEventListener("click", closeDetail);
 document.getElementById("detail-backdrop").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (ev) => {
   if (ev.key !== "Escape") return;
-  if (!settingsOverlay.hidden) closeSettings();
+  if (!unlockOverlay.hidden) closeUnlockDialog();
+  else if (!settingsOverlay.hidden) closeSettings();
   else if (!overlayEl.hidden) closeDetail();
 });
 
@@ -536,7 +652,7 @@ function openSettings() {
 
 function closeSettings() {
   settingsOverlay.hidden = true;
-  if (overlayEl.hidden) document.body.style.overflow = "";
+  if (overlayEl.hidden && unlockOverlay.hidden) document.body.style.overflow = "";
   document.getElementById("settings-btn").focus();
 }
 
@@ -569,6 +685,58 @@ settingsForm.addEventListener("submit", async (ev) => {
   } catch (err) {
     saveNote.textContent = err.message || "Couldn't save — is the backend up?";
     saveNote.className = "save-note err";
+  }
+});
+
+/* -------------------------------------------------- plug unlock dialog
+   A locked plug's switch is fully disabled (neither on nor off) until this
+   typed confirmation clears the lock. Arming the lock (see applyLock's
+   caller) needs no ceremony — only removing it does. */
+
+const unlockOverlay = document.getElementById("unlock-overlay");
+const unlockForm = document.getElementById("unlock-form");
+const unlockInput = document.getElementById("unlock-input");
+const unlockNote = document.getElementById("unlock-note");
+let unlockTarget = null; // { deviceId, pair } for the plug being unlocked
+
+function openUnlockDialog(deviceId, deviceName, pair) {
+  unlockTarget = { deviceId, pair };
+  document.getElementById("unlock-title").textContent = `Unlock ${deviceName}`;
+  unlockInput.value = "";
+  unlockNote.textContent = "";
+  unlockNote.className = "save-note";
+  unlockOverlay.hidden = false;
+  document.body.style.overflow = "hidden";
+  unlockInput.focus();
+}
+
+function closeUnlockDialog() {
+  unlockOverlay.hidden = true;
+  if (overlayEl.hidden && settingsOverlay.hidden) document.body.style.overflow = "";
+  unlockTarget = null;
+}
+
+document.getElementById("unlock-close").addEventListener("click", closeUnlockDialog);
+document.getElementById("unlock-backdrop").addEventListener("click", closeUnlockDialog);
+
+unlockForm.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if (!unlockTarget) return;
+  if (unlockInput.value.trim().toLowerCase() !== "unlock") {
+    unlockInput.classList.add("shake");
+    setTimeout(() => unlockInput.classList.remove("shake"), 300);
+    unlockNote.textContent = "Type UNLOCK exactly to confirm.";
+    unlockNote.className = "save-note err";
+    return;
+  }
+  const { deviceId, pair } = unlockTarget;
+  try {
+    await postJSON(`/api/devices/${deviceId}/lock`, { locked: false, confirm: "unlock" });
+    applyLock(pair, false);
+    closeUnlockDialog();
+  } catch (err) {
+    unlockNote.textContent = err.message || "Couldn't unlock — is the backend up?";
+    unlockNote.className = "save-note err";
   }
 });
 
