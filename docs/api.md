@@ -39,6 +39,17 @@ unix epoch seconds (UTC); the dashboard formats them client-side.
   `kwh_24h` is average draw integrated over the hours actually covered by
   samples, so it's an estimate (≈) rather than metered energy.
 
+## Settings
+
+- `GET /settings/thresholds` → alert thresholds per key
+  (`temp`, `hum`, `lux`, `co2`, `power`), each `{"min": ..., "max": ...}`
+  with `null` meaning that bound is disabled. Defaults: temp 17–26 °C,
+  hum 30–60 %RH, CO₂ max 1000 ppm, plug power max 1800 W, lux off.
+- `PUT /settings/thresholds` → replace them (same shape as the GET; the
+  dashboard's gear dialog uses this). Rejects `min >= max` with 400.
+  A reading outside its range flags the widget with a HIGH/LOW chip, and
+  the detail charts shade the out-of-range region as a faint red zone.
+
 ## Wired lane passthrough
 
 - `POST /arduino/command`, body `{"command": "RELAY1:ON"}` — writes one raw

@@ -12,8 +12,16 @@
 <header class="board-header">
   <div class="header-row">
     <h1 class="board-name">HUB-01 <span class="board-sub">home hub · one room, no cloud</span></h1>
-    <div class="link-status" id="link-status" title="Backend connection">
-      <span class="link-dot" id="link-dot"></span><span id="link-label">connecting</span>
+    <div class="header-tools">
+      <div class="link-status" id="link-status" title="Backend connection">
+        <span class="link-dot" id="link-dot"></span><span id="link-label">connecting</span>
+      </div>
+      <button class="settings-btn" id="settings-btn" title="Alert thresholds" aria-label="Alert thresholds">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
     </div>
   </div>
   <!-- Signature element: the live wire. Reconstructs the actual serial
@@ -181,6 +189,53 @@
       <button class="detail-close" id="detail-close" aria-label="Close">×</button>
     </header>
     <div class="detail-body" id="detail-body"></div>
+  </div>
+</div>
+
+<!-- Alert threshold settings dialog -->
+<div class="detail-overlay" id="settings-overlay" hidden>
+  <div class="detail-backdrop" id="settings-backdrop"></div>
+  <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="settings-title">Alert thresholds</h3>
+        <code class="wire-key">CFG</code>
+      </div>
+      <button class="detail-close" id="settings-close" aria-label="Close">×</button>
+    </header>
+    <p class="settings-hint">A reading outside its range flags the widget on the board.
+       Leave a field empty to disable that bound.</p>
+    <form id="settings-form">
+      <div class="threshold-row">
+        <span class="th-label">Temperature <span class="th-unit">°C</span></span>
+        <label>min <input type="number" step="any" data-key="temp" data-bound="min"></label>
+        <label>max <input type="number" step="any" data-key="temp" data-bound="max"></label>
+      </div>
+      <div class="threshold-row">
+        <span class="th-label">Humidity <span class="th-unit">%RH</span></span>
+        <label>min <input type="number" step="any" data-key="hum" data-bound="min"></label>
+        <label>max <input type="number" step="any" data-key="hum" data-bound="max"></label>
+      </div>
+      <div class="threshold-row">
+        <span class="th-label">Light level <span class="th-unit">lx</span></span>
+        <label>min <input type="number" step="any" data-key="lux" data-bound="min"></label>
+        <label>max <input type="number" step="any" data-key="lux" data-bound="max"></label>
+      </div>
+      <div class="threshold-row">
+        <span class="th-label">CO₂ <span class="th-unit">ppm</span></span>
+        <label>min <input type="number" step="any" data-key="co2" data-bound="min"></label>
+        <label>max <input type="number" step="any" data-key="co2" data-bound="max"></label>
+      </div>
+      <div class="threshold-row">
+        <span class="th-label">Plug power draw <span class="th-unit">W</span></span>
+        <label>min <input type="number" step="any" data-key="power" data-bound="min"></label>
+        <label>max <input type="number" step="any" data-key="power" data-bound="max"></label>
+      </div>
+      <div class="settings-actions">
+        <button type="submit" class="save-btn">Save thresholds</button>
+        <span class="save-note" id="save-note" role="status"></span>
+      </div>
+    </form>
   </div>
 </div>
 

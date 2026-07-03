@@ -37,6 +37,41 @@ async function postJSON(url) {
   return body;
 }
 
+/* ------------------------------------------------------ alert thresholds */
+
+let thresholds = null; // {temp: {min, max}, ..., power: {min, max}}
+
+async function loadThresholds() {
+  try {
+    thresholds = await getJSON("/api/settings/thresholds");
+  } catch { /* alerts stay off until the next successful load */ }
+}
+
+// -> "high" | "low" | null
+function alertState(key, value) {
+  const t = thresholds && thresholds[key];
+  if (!t || value === null || value === undefined) return null;
+  if (t.min !== null && value < t.min) return "low";
+  if (t.max !== null && value > t.max) return "high";
+  return null;
+}
+
+function applyAlert(widget, state) {
+  const metricValue = widget.querySelector(".metric-value");
+  metricValue.classList.toggle("alert", Boolean(state));
+  let chip = metricValue.querySelector(".alert-chip");
+  if (state) {
+    if (!chip) {
+      chip = document.createElement("span");
+      chip.className = "alert-chip";
+      metricValue.appendChild(chip);
+    }
+    chip.textContent = state === "high" ? "▲ HIGH" : "▼ LOW";
+  } else if (chip) {
+    chip.remove();
+  }
+}
+
 /* ---------------------------------------------------------- live values */
 
 function setLink(online) {
@@ -65,6 +100,7 @@ function renderMetricValues(latest) {
     if (r) {
       widget.querySelector(".value").textContent = Number(r.value).toFixed(m.decimals);
       widget.querySelector(".metric-value").classList.toggle("stale", now - r.ts > 60);
+      applyAlert(widget, alertState(m.id, Number(r.value)));
     }
   }
 }
@@ -194,6 +230,8 @@ function renderPlugs(devices) {
     pair.querySelector(".plug-switch").disabled = false;
     pair.querySelector(".power-widget .value").textContent =
       power.watts === null ? "—" : Number(power.watts).toFixed(1);
+    applyAlert(pair.querySelector(".power-widget"),
+      power.watts === null ? null : alertState("power", Number(power.watts)));
     pair.querySelector(".card-note").textContent = `Polled ${relTime(power.ts)}.`;
   }
 }
@@ -253,7 +291,68 @@ function closeDetail() {
 document.getElementById("detail-close").addEventListener("click", closeDetail);
 document.getElementById("detail-backdrop").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape" && !overlayEl.hidden) closeDetail();
+  if (ev.key !== "Escape") return;
+  if (!settingsOverlay.hidden) closeSettings();
+  else if (!overlayEl.hidden) closeDetail();
+});
+
+/* -------------------------------------------------------- settings dialog */
+
+const settingsOverlay = document.getElementById("settings-overlay");
+const settingsForm = document.getElementById("settings-form");
+const saveNote = document.getElementById("save-note");
+
+function openSettings() {
+  if (thresholds) {
+    settingsForm.querySelectorAll("input").forEach((input) => {
+      const t = thresholds[input.dataset.key];
+      const v = t ? t[input.dataset.bound] : null;
+      input.value = v === null || v === undefined ? "" : v;
+    });
+  }
+  saveNote.textContent = "";
+  saveNote.className = "save-note";
+  settingsOverlay.hidden = false;
+  document.body.style.overflow = "hidden";
+  settingsForm.querySelector("input").focus();
+}
+
+function closeSettings() {
+  settingsOverlay.hidden = true;
+  if (overlayEl.hidden) document.body.style.overflow = "";
+  document.getElementById("settings-btn").focus();
+}
+
+document.getElementById("settings-btn").addEventListener("click", openSettings);
+document.getElementById("settings-close").addEventListener("click", closeSettings);
+document.getElementById("settings-backdrop").addEventListener("click", closeSettings);
+
+settingsForm.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = {};
+  settingsForm.querySelectorAll("input").forEach((input) => {
+    const key = input.dataset.key;
+    body[key] = body[key] || {};
+    body[key][input.dataset.bound] =
+      input.value.trim() === "" ? null : Number(input.value);
+  });
+  try {
+    const resp = await fetch("/api/settings/thresholds", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || "save failed");
+    thresholds = data;
+    saveNote.textContent = "Saved.";
+    saveNote.className = "save-note ok";
+    pollFast(); // re-evaluate widget alerts right away
+    if (openWidget) loadDetail(openWidget); // redraw threshold lines
+  } catch (err) {
+    saveNote.textContent = err.message || "Couldn't save — is the backend up?";
+    saveNote.className = "save-note err";
+  }
 });
 
 function setStat(widget, name, value, unit) {
@@ -280,10 +379,12 @@ async function loadDetail(widget) {
   try {
     if (kind === "metric") {
       const m = METRICS.find((x) => x.id === widget.dataset.metric);
+      // finer typical-day buckets on the short chart: 10 min over 3h ≈ 18 pts
+      const bucket = range === "3h" ? 10 : 30;
       const [history, stats, profile] = await Promise.all([
         getJSON(`/api/sensors/history?metric=${m.id}&range=${range}`),
         getJSON(`/api/sensors/stats?metric=${m.id}`),
-        getJSON(`/api/sensors/profile?metric=${m.id}`),
+        getJSON(`/api/sensors/profile?metric=${m.id}&bucket=${bucket}`),
       ]);
 
       // "typical now": the 7-day average for the current time-of-day bucket
@@ -301,10 +402,11 @@ async function loadDetail(widget) {
       setStat(widget, "avg_24h", stats.avg_24h, m.unit);
       setStat(widget, "typical_now", typicalNow, m.unit);
 
-      // On the 24h view, overlay the typical-day curve mapped onto the
-      // rolling window (each time-of-day occurs exactly once in 24h).
+      // On the 3h and 24h views, overlay the typical-day curve mapped onto
+      // the rolling window (each time-of-day occurs exactly once in 24h;
+      // drawChart clips it to the visible span).
       let overlaySeries = null;
-      if (range === "24h" && profile.points.length >= 2) {
+      if ((range === "3h" || range === "24h") && profile.points.length >= 2) {
         const now = Date.now() / 1000;
         overlaySeries = {
           label: "Typical day (7d avg)",
@@ -313,9 +415,10 @@ async function loadDetail(widget) {
             .sort((a, b) => a.ts - b.ts),
         };
       }
-      renderLegend(detail, m.color, overlaySeries);
+      renderLegend(detail, m.color, overlaySeries, `Last ${range}`);
       drawChart(detail.querySelector(".chart"), history.points,
-        { ...m, overlay: overlaySeries });
+        { ...m, overlay: overlaySeries,
+          thresholds: thresholds ? thresholds[m.id] : null });
     } else if (kind === "power") {
       const id = widget.dataset.deviceId;
       const [history, stats] = await Promise.all([
@@ -327,7 +430,8 @@ async function loadDetail(widget) {
         .map((p) => ({ ts: p.ts, value: p.watts }));
       renderLegend(detail, POWER_COLOR, null);
       drawChart(detail.querySelector(".chart"), points,
-        { unit: "W", decimals: 1, color: POWER_COLOR });
+        { unit: "W", decimals: 1, color: POWER_COLOR,
+          thresholds: thresholds ? thresholds.power : null });
       setStat(widget, "avg_24h_w", stats.avg_24h_w, "W");
       setStat(widget, "kwh_24h", stats.kwh_24h, "kWh");
       setStat(widget, "avg_7d_w", stats.avg_7d_w, "W");
@@ -342,7 +446,7 @@ async function loadDetail(widget) {
   }
 }
 
-function renderLegend(detail, color, overlaySeries) {
+function renderLegend(detail, color, overlaySeries, mainLabel) {
   let legend = detail.querySelector(".chart-legend");
   if (!overlaySeries) {
     if (legend) legend.remove();
@@ -354,7 +458,7 @@ function renderLegend(detail, color, overlaySeries) {
     detail.querySelector(".chart").before(legend);
   }
   legend.textContent = "";
-  for (const [label, opacity] of [["Last 24h", 1], [overlaySeries.label, 0.45]]) {
+  for (const [label, opacity] of [[mainLabel, 1], [overlaySeries.label, 0.45]]) {
     const item = document.createElement("span");
     const key = document.createElement("i");
     key.className = "line-key";
@@ -506,8 +610,58 @@ function drawChart(container, points, opts) {
 
   // area wash (~10% opacity) + 2px line + end dot with surface ring
   const lineD = pathD(points);
-  el("path", { d: `${lineD}L${X(xMax).toFixed(1)},${Y(yMin).toFixed(1)}L${X(xMin).toFixed(1)},${Y(yMin).toFixed(1)}Z`,
-               fill: opts.color, opacity: 0.1 });
+  const areaBelowD = `${lineD}L${X(xMax).toFixed(1)},${Y(yMin).toFixed(1)}L${X(xMin).toFixed(1)},${Y(yMin).toFixed(1)}Z`;
+  el("path", { d: areaBelowD, fill: opts.color, opacity: 0.1 });
+
+  // thresholds: dotted line at the bound; the exceedance area between the
+  // curve and that line fills red (the curve-hugging shape comes from
+  // clipping the full above/below-curve polygon to the threshold side)
+  if (opts.thresholds) {
+    const critical = cssVar("--critical");
+    const { min: tMin, max: tMax } = opts.thresholds;
+    const areaAboveD = `${lineD}L${X(xMax).toFixed(1)},${pad.top}L${X(xMin).toFixed(1)},${pad.top}Z`;
+    const defs = document.createElementNS(NS, "defs");
+    svg.appendChild(defs);
+    const uid = Math.random().toString(36).slice(2, 8);
+
+    const clipRect = (id, y1, y2) => {
+      const clip = document.createElementNS(NS, "clipPath");
+      clip.setAttribute("id", id);
+      const rect = document.createElementNS(NS, "rect");
+      rect.setAttribute("x", pad.left);
+      rect.setAttribute("y", y1);
+      rect.setAttribute("width", iw);
+      rect.setAttribute("height", Math.max(y2 - y1, 0));
+      clip.appendChild(rect);
+      defs.appendChild(clip);
+    };
+
+    const drawBound = (value, isMax) => {
+      if (value === null || value === undefined) return;
+      const visible = isMax ? value < yMax : value > yMin; // any exceedance side on screen
+      if (!visible) return;
+      const edge = Y(Math.min(Math.max(value, yMin), yMax));
+      const clipId = `th-${uid}-${isMax ? "max" : "min"}`;
+      if (isMax) clipRect(clipId, pad.top, edge);
+      else clipRect(clipId, edge, pad.top + ih);
+      el("path", { d: isMax ? areaBelowD : areaAboveD, fill: critical,
+                   opacity: 0.2, "clip-path": `url(#${clipId})` });
+      if (value >= yMin && value <= yMax) { // line only when the bound is on screen
+        el("line", { x1: pad.left, y1: edge, x2: w - pad.right, y2: edge,
+                     stroke: critical, "stroke-width": 1.5, opacity: 0.75,
+                     "stroke-linecap": "round", "stroke-dasharray": "1 5" });
+        const label = el("text", { x: w - pad.right - 4,
+                                   y: isMax ? edge - 5 : edge + 12,
+                                   "text-anchor": "end", fill: critical,
+                                   "font-size": 9, opacity: 0.85,
+                                   "font-family": "ui-monospace, Menlo, monospace" });
+        label.textContent = `${isMax ? "max" : "min"} ${value}`;
+      }
+    };
+    drawBound(tMax, true);
+    drawBound(tMin, false);
+  }
+
   el("path", { d: lineD, fill: "none", stroke: opts.color, "stroke-width": 2,
                "stroke-linejoin": "round", "stroke-linecap": "round" });
   const last = points[points.length - 1];
@@ -624,16 +778,28 @@ document.querySelectorAll(".widget[data-widget='metric'], .widget[data-widget='m
   .forEach(wireWidget);
 
 (async () => {
+  await loadThresholds();
   await pollFast();
   refreshAllSparks();
-  // deep-link: /#temp, /#co2, /#motion, /#power-1 (device id) opens that detail
-  const hash = location.hash.slice(1);
-  if (hash) {
+  // deep-link: /#temp, /#co2, /#motion, /#power-1 (device id) opens that
+  // detail; an optional range suffix like /#temp:3h preselects the range;
+  // /#settings opens the threshold dialog
+  const [hash, hashRange] = location.hash.slice(1).split(":");
+  if (hash === "settings") {
+    openSettings();
+  } else if (hash) {
     const powerMatch = hash.match(/^power-(\d+)$/);
     const widget = powerMatch
       ? document.querySelector(`.power-widget[data-device-id="${powerMatch[1]}"]`)
       : document.querySelector(`.widget[data-metric="${hash}"], .widget[data-widget="${hash}"]`);
-    if (widget) openDetail(widget);
+    if (widget) {
+      if (hashRange) {
+        widget.dataset.range = hashRange;
+        widget._detail.querySelectorAll(".detail-range .range-btn").forEach((b) =>
+          b.classList.toggle("active", b.dataset.range === hashRange));
+      }
+      openDetail(widget);
+    }
   }
   setInterval(pollFast, POLL_FAST_MS);
   setInterval(() => {

@@ -61,6 +61,7 @@ independent threads and never block each other.
 | `POST /api/devices/:id/toggle` | flip the plug relay |
 | `GET /api/devices/:id/power/history?range=24h` | power draw series |
 | `GET /api/devices/:id/power/stats` | 24h/7d avg draw + est. 24h kWh |
+| `GET/PUT /api/settings/thresholds` | alert thresholds (persisted in the DB) |
 | `POST /api/arduino/command` | send a raw protocol line to the Arduino |
 
 Plugs are seeded from `MYSTROM_PLUG_IP` / `MYSTROM_PLUG2_IP` in `.env`; to add

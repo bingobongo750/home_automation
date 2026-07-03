@@ -33,6 +33,41 @@ def sensors_latest():
     return jsonify(db.latest_readings())
 
 
+@api.get("/settings/thresholds")
+def get_thresholds():
+    return jsonify(db.get_thresholds())
+
+
+@api.put("/settings/thresholds")
+def put_thresholds():
+    """Replace alert thresholds. Body: {"temp": {"min": 17, "max": 26}, ...}
+    for keys temp/hum/lux/co2/power; null (or a missing bound) disables it."""
+    body = request.get_json(silent=True) or {}
+    clean = {}
+    for key in db.DEFAULT_THRESHOLDS:
+        entry = body.get(key)
+        if entry is None:
+            entry = {}
+        if not isinstance(entry, dict):
+            return jsonify({"error": f"{key} must be an object with min/max"}), 400
+        bounds = {}
+        for bound in ("min", "max"):
+            value = entry.get(bound)
+            if value is None or value == "":
+                bounds[bound] = None
+            else:
+                try:
+                    bounds[bound] = float(value)
+                except (TypeError, ValueError):
+                    return jsonify({"error": f"{key}.{bound} must be a number or null"}), 400
+        if bounds["min"] is not None and bounds["max"] is not None and bounds["min"] >= bounds["max"]:
+            return jsonify({"error": f"{key}: min must be below max"}), 400
+        clean[key] = bounds
+    db.set_thresholds(clean)
+    log.info("Alert thresholds updated: %s", clean)
+    return jsonify(clean)
+
+
 @api.get("/sensors/history")
 def sensors_history():
     metric = request.args.get("metric", "")
@@ -56,11 +91,22 @@ def sensors_stats():
 
 @api.get("/sensors/profile")
 def sensors_profile():
-    """'Typical day' curve: 7-day average per half-hour of the day."""
+    """'Typical day' curve: 7-day average per time-of-day bucket. Optional
+    ?bucket=<minutes> (default 30, clamped 5-120) — the dashboard uses finer
+    buckets for short-range charts."""
     metric = request.args.get("metric", "")
     if metric not in VALID_METRICS:
         return jsonify({"error": f"unknown metric {metric!r}, expected one of {sorted(VALID_METRICS)}"}), 400
-    return jsonify({"metric": metric, "days": 7, "points": db.metric_daily_profile(metric)})
+    try:
+        bucket = min(max(int(request.args.get("bucket", "30")), 5), 120)
+    except ValueError:
+        return jsonify({"error": "bucket must be an integer number of minutes"}), 400
+    return jsonify({
+        "metric": metric,
+        "days": 7,
+        "bucket_minutes": bucket,
+        "points": db.metric_daily_profile(metric, bucket_minutes=bucket),
+    })
 
 
 @api.get("/motion/events")

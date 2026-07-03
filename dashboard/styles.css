@@ -79,6 +79,21 @@ button:focus-visible, .widget:focus-visible { outline: 2px solid var(--copper); 
   margin-left: 10px;
 }
 
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-btn {
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.settings-btn:hover { color: var(--copper); background: var(--surface-2); }
+
 .link-status {
   display: flex;
   align-items: center;
@@ -164,19 +179,21 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 /* --------------------------------------------------------------- widgets */
 
+/* 230px min + 14px gaps keeps all four room sensors on one line inside the
+   1124px content width — don't raise these without re-checking that. */
 .widget-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(276px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
   align-items: start;
 }
-.widget-grid.single { grid-template-columns: minmax(276px, 672px); }
+.widget-grid.single { grid-template-columns: minmax(230px, 560px); }
 
 .card, .widget {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: 10px;
-  padding: 19px 22px 17px;
+  padding: 16px 18px 14px;
 }
 
 .widget { cursor: pointer; transition: border-color 0.12s ease; }
@@ -191,7 +208,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .card-label {
   margin: 0;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--ink-2);
@@ -216,25 +233,43 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 .widget:hover .expand-hint { color: var(--copper); }
 
-.card-note { margin: 10px 0 0; font-size: 13.5px; color: var(--muted); }
+.card-note { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
 
 .metric-value {
-  margin: 2px 0 10px;
+  margin: 2px 0 8px;
   font-family: var(--mono);
   font-weight: 600;
-  font-size: 38px;
+  font-size: 32px;
   line-height: 1.1;
   color: var(--ink);
 }
 .metric-value .unit {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 400;
   color: var(--muted);
-  margin-left: 8px;
+  margin-left: 7px;
 }
+/* out-of-threshold reading: status color + labeled chip (never color alone).
+   .stale is declared after .alert on purpose — old data wins over alarm. */
+.metric-value.alert .value { color: var(--critical); }
 .metric-value.stale .value { color: var(--muted); }
 
-.spark { height: 44px; }
+.alert-chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--critical);
+  border: 1px solid rgba(208, 59, 59, 0.4);
+  background: rgba(208, 59, 59, 0.12);
+  border-radius: 3px;
+  padding: 2px 7px;
+  margin-left: 10px;
+  vertical-align: 6px;
+}
+
+.spark { height: 36px; }
 .spark svg { display: block; width: 100%; height: 100%; }
 
 /* -------------------------------------------------- detail overlay dialog */
@@ -291,6 +326,70 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .widget-detail { margin-top: 10px; }
 .widget-detail[hidden] { display: none; }
+
+/* threshold settings dialog */
+.settings-panel { width: min(480px, 94vw); }
+
+.settings-hint { margin: 4px 0 16px; font-size: 12.5px; color: var(--muted); }
+
+.threshold-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.threshold-row:last-of-type { border-bottom: none; }
+
+.th-label { font-size: 13.5px; color: var(--ink-2); }
+.th-unit { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 4px; }
+
+.threshold-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.threshold-row input {
+  width: 84px;
+  padding: 5px 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+.threshold-row input:focus-visible {
+  outline: 2px solid var(--copper);
+  outline-offset: 1px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.save-btn {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--page);
+  background: var(--copper);
+  border-radius: 7px;
+  padding: 8px 16px;
+}
+.save-btn:hover { filter: brightness(1.08); }
+
+.save-note { font-size: 12.5px; color: var(--muted); }
+.save-note.ok { color: var(--good); }
+.save-note.err { color: var(--critical); }
 
 .chart-legend {
   display: flex;
@@ -367,7 +466,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .chart-tooltip {
   position: fixed;
-  z-index: 10;
+  z-index: 30; /* above the detail overlay (20) — charts live inside it */
   pointer-events: none;
   background: var(--surface-2);
   border: 1px solid var(--hairline);
@@ -389,19 +488,19 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .plug-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(564px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(470px, 1fr));
+  gap: 14px;
 }
-@media (max-width: 660px) { .plug-list { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .plug-list { grid-template-columns: 1fr; } }
 
 /* switch card + power widget, side by side */
 .plug-pair {
   display: grid;
-  grid-template-columns: 246px 1fr;
-  gap: 16px;
+  grid-template-columns: 205px 1fr;
+  gap: 14px;
   align-items: stretch;
 }
-@media (max-width: 660px) { .plug-pair { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .plug-pair { grid-template-columns: 1fr; } }
 
 .plug-room { margin: 0 0 14px; font-size: 12.5px; color: var(--muted); }
 
@@ -446,7 +545,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 
 .pir-lamp {
-  width: 17px; height: 17px;
+  width: 14px; height: 14px;
   border-radius: 50%;
   background: var(--surface-2);
   border: 1px solid var(--hairline);
@@ -459,7 +558,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .pir-label {
   font-family: var(--mono);
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 600;
   letter-spacing: 0.04em;
 }

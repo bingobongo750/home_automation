@@ -1,5 +1,8 @@
 """SQLite layer: schema, and all read/write helpers.
 
+Includes a small key/value `settings` table (JSON values) used for alert
+thresholds; defaults live in DEFAULT_THRESHOLDS below.
+
 Every helper opens a short-lived connection so the serial thread, the plug
 poller thread, and Flask request handlers can all touch the DB without
 sharing connections across threads. WAL mode keeps readers and the single
@@ -12,6 +15,7 @@ devices         generic device registry (currently one wifi_plug row)
 power_readings  plug power/state time series, keyed to devices.id
 """
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -43,7 +47,22 @@ CREATE TABLE IF NOT EXISTS power_readings (
     relay_on  INTEGER               -- 0/1, plug relay state at poll time
 );
 CREATE INDEX IF NOT EXISTS idx_power_device_ts ON power_readings (device_id, ts);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL               -- JSON blob
+);
 """
+
+# Alert thresholds: a reading outside [min, max] flags its widget on the
+# dashboard. None disables that bound. "power" applies to every plug's draw.
+DEFAULT_THRESHOLDS = {
+    "temp": {"min": 17.0, "max": 26.0},    # °C — comfortable room band
+    "hum": {"min": 30.0, "max": 60.0},     # %RH — below: dry air, above: mold risk
+    "lux": {"min": None, "max": None},     # off by default; set per taste
+    "co2": {"min": None, "max": 1000.0},   # ppm — >1000 means ventilate
+    "power": {"min": None, "max": 1800.0}, # W — sustained near-limit socket load
+}
 
 
 def connect() -> sqlite3.Connection:
@@ -76,6 +95,30 @@ def init_db() -> None:
                     "INSERT INTO devices (name, type, ip, room) VALUES (?, 'wifi_plug', ?, ?)",
                     (name, ip, room),
                 )
+
+
+# ----------------------------------------------------------------- settings
+
+def get_thresholds() -> dict:
+    """Saved thresholds merged over the defaults (so new keys get defaults)."""
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'thresholds'").fetchone()
+    saved = json.loads(row["value"]) if row else {}
+    out = {}
+    for key, default in DEFAULT_THRESHOLDS.items():
+        entry = saved.get(key, {})
+        out[key] = {"min": entry.get("min", default["min"]),
+                    "max": entry.get("max", default["max"])}
+    return out
+
+
+def set_thresholds(thresholds: dict) -> None:
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO settings (key, value) VALUES ('thresholds', ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (json.dumps(thresholds),),
+        )
 
 
 # ------------------------------------------------------------- sensor writes
