@@ -33,8 +33,7 @@
 </header>
 
 <main>
-  <!-- Every .widget expands on click to show history + stats.
-       Future Lighting section: add another .zone here. -->
+  <!-- Every .widget expands on click to show history + stats. -->
 
   <section class="zone">
     <h2 class="zone-label">Room conditions</h2>
@@ -141,6 +140,16 @@
          a switch card and a clickable power widget, side by side. -->
     <div class="plug-list" id="plug-list">
       <p class="zone-empty" id="plug-empty">Looking for plugs…</p>
+    </div>
+  </section>
+
+  <section class="zone">
+    <h2 class="zone-label">Lighting</h2>
+    <!-- One .light-card per wled_zone device, built by app.js from
+         /api/devices. Zones are WiFi devices (WLED on ESP32), same lane as
+         the myStrom plugs above — never routed through the Arduino. -->
+    <div class="lighting-list" id="lighting-list">
+      <p class="zone-empty" id="lighting-empty">Looking for lighting zones…</p>
     </div>
   </section>
 

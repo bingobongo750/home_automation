@@ -14,6 +14,31 @@ done. Nothing below blocks software work.
 4. Sanity check from the Mac: `curl http://<plug-ip>/report` should return
    JSON with `power` and `relay` fields.
 
+## WLED zone provisioning (per lighting zone)
+
+The software (backend, mock zones, dashboard cards) is complete and runs
+against `MOCK_HARDWARE=1`. Per zone (e.g. "Cupboard", "Table"), when the
+hardware is at hand:
+
+1. Wire the WS2812B/addressable strip's data line to an ESP32 dev board
+   (a level shifter to 5V logic is recommended for longer runs), then flash
+   it with stock [WLED](https://kno.wled.ge) — no custom firmware needed.
+2. Provision the ESP32 onto the home WiFi via WLED's captive portal (only
+   time any app/portal is touched — runtime control is local-only, same as
+   the myStrom plug).
+3. On the router, give it a **static DHCP reservation**.
+4. Put that IP in `.env` as `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` (or add a
+   new `WLED_<ZONE>_IP` + a row in `WLED_SEEDS` in `app/db.py` for a third
+   zone), and update the seeded device row if it differs
+   (`UPDATE devices SET ip = '...' WHERE name = 'Cupboard';` — or delete the
+   DB and let it reseed from `.env`).
+5. Sanity check from the Mac: `curl http://<zone-ip>/json/state` should
+   return JSON with `on`, `bri`, and `seg` fields.
+6. If a zone is meant to auto-dim with ambient light, set its mode to
+   `auto` from the dashboard's Lighting card (or
+   `POST /api/devices/:id/mode {"mode": "auto"}`) once the BH1750 is
+   installed and reporting `lux`.
+
 ## Breadboard wiring (Arduino Uno)
 
 Pinout lives in `/firmware/README.md`. Summary: BME280 + BH1750 + SCD30 share

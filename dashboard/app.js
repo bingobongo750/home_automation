@@ -2,8 +2,8 @@
    One-page widget board. Live values poll every 5s; sparklines and an open
    detail dialog refresh every 30s. Clicking a widget opens its detail in an
    overlay dialog (nothing on the board moves); the switch cards control the
-   plugs. Metric details overlay a "typical day" curve (7-day average per
-   half-hour of the day) on the 24h chart. */
+   plugs and lighting zones. Metric details overlay a "typical day" curve
+   (7-day average per half-hour of the day) on the 24h chart. */
 
 "use strict";
 
@@ -30,11 +30,16 @@ async function getJSON(url) {
   return resp.json();
 }
 
-async function postJSON(url) {
-  const resp = await fetch(url, { method: "POST" });
-  const body = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(body.error || `${url} -> ${resp.status}`);
-  return body;
+async function postJSON(url, body) {
+  const opts = { method: "POST" };
+  if (body !== undefined) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(url, opts);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || `${url} -> ${resp.status}`);
+  return data;
 }
 
 /* ------------------------------------------------------ alert thresholds */
@@ -129,6 +134,7 @@ async function pollFast() {
     renderMetricValues(latest);
     renderPIR(latest);
     renderPlugs(devices);
+    renderLighting(devices, latest);
   } catch {
     setLink(false);
   }
@@ -233,6 +239,217 @@ function renderPlugs(devices) {
     applyAlert(pair.querySelector(".power-widget"),
       power.watts === null ? null : alertState("power", Number(power.watts)));
     pair.querySelector(".card-note").textContent = `Polled ${relTime(power.ts)}.`;
+  }
+}
+
+/* -------------------------------------------------------------- lighting
+   One .light-card per wled_zone device. The top-right switch is always the
+   zone's physical on/off; Mode (manual/auto) lives in the control rows with
+   brightness/color/effect. In 'auto' mode the lighting job (app/lighting.py)
+   drives on/brightness from lux, so those two controls go read-only and
+   just keep reflecting the live value each poll — they aren't hidden, since
+   color/effect stay user-editable in either mode. */
+
+const lightCards = new Map(); // device id -> .light-card element
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex([r, g, b]) {
+  return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+function lightCardDOM(device) {
+  const card = document.createElement("article");
+  card.className = "card light-card";
+  card.innerHTML = `
+    <header class="card-head">
+      <h3 class="card-label"></h3>
+      <span class="head-right">
+        <code class="wire-key"></code>
+        <button class="light-power" role="switch" aria-checked="false" disabled>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">…</span>
+        </button>
+      </span>
+    </header>
+    <p class="light-room"></p>
+    <div class="light-controls">
+      <label class="light-field">
+        <span class="light-field-label">Mode</span>
+        <button class="mode-toggle" role="switch" aria-checked="false" disabled>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">…</span>
+        </button>
+      </label>
+      <label class="light-field">
+        <span class="light-field-label">Brightness</span>
+        <input type="range" min="0" max="255" class="light-brightness" disabled>
+        <span class="light-brightness-value">—</span>
+      </label>
+      <label class="light-field">
+        <span class="light-field-label">Color</span>
+        <input type="color" class="light-color" disabled>
+      </label>
+      <label class="light-field">
+        <span class="light-field-label">Effect</span>
+        <select class="light-effect" disabled>
+          <option value="0">Solid</option>
+          <option value="1">Blink</option>
+          <option value="2">Breathe</option>
+          <option value="3">Wipe</option>
+          <option value="8">Colorloop</option>
+          <option value="9">Rainbow</option>
+        </select>
+      </label>
+    </div>
+    <p class="card-note light-status"></p>`;
+
+  // device fields are API data — set as text, never markup
+  card.querySelector(".card-label").textContent = device.name;
+  card.querySelector(".wire-key").textContent = device.ip || "no ip";
+  card.querySelector(".light-room").textContent = device.room || "";
+
+  const status = card.querySelector(".light-status");
+
+  const modeToggle = card.querySelector(".mode-toggle");
+  modeToggle.addEventListener("click", async () => {
+    if (modeToggle.disabled) return;
+    modeToggle.disabled = true;
+    const newMode = modeToggle.getAttribute("aria-checked") === "true" ? "manual" : "auto";
+    try {
+      await postJSON(`/api/devices/${device.id}/mode`, { mode: newMode });
+      applyLightMode(card, newMode);
+    } catch {
+      status.textContent = "Couldn't change mode — is the zone reachable?";
+    } finally {
+      modeToggle.disabled = false;
+    }
+  });
+
+  const powerSwitch = card.querySelector(".light-power");
+  powerSwitch.addEventListener("click", async () => {
+    if (powerSwitch.disabled) return;
+    powerSwitch.disabled = true;
+    const on = powerSwitch.getAttribute("aria-checked") !== "true";
+    try {
+      applyLightState(card, await postJSON(`/api/devices/${device.id}/state`, { on }));
+      status.textContent = "";
+    } catch {
+      status.textContent = "Couldn't reach the zone.";
+    } finally {
+      powerSwitch.disabled = false;
+    }
+  });
+
+  const brightness = card.querySelector(".light-brightness");
+  brightness.addEventListener("input", () => {
+    card.querySelector(".light-brightness-value").textContent = brightness.value;
+  });
+  brightness.addEventListener("change", async () => {
+    try {
+      applyLightState(card, await postJSON(`/api/devices/${device.id}/state`,
+        { brightness: Number(brightness.value) }));
+      status.textContent = "";
+    } catch {
+      status.textContent = "Couldn't reach the zone.";
+    }
+  });
+
+  const color = card.querySelector(".light-color");
+  color.addEventListener("change", async () => {
+    try {
+      applyLightState(card, await postJSON(`/api/devices/${device.id}/state`,
+        { color: hexToRgb(color.value) }));
+      status.textContent = "";
+    } catch {
+      status.textContent = "Couldn't reach the zone.";
+    }
+  });
+
+  const effect = card.querySelector(".light-effect");
+  effect.addEventListener("change", async () => {
+    try {
+      applyLightState(card, await postJSON(`/api/devices/${device.id}/state`,
+        { effect: Number(effect.value) }));
+      status.textContent = "";
+    } catch {
+      status.textContent = "Couldn't reach the zone.";
+    }
+  });
+
+  return card;
+}
+
+function applyLightMode(card, mode) {
+  const isAuto = mode === "auto";
+  card.dataset.mode = mode;
+  const toggle = card.querySelector(".mode-toggle");
+  toggle.setAttribute("aria-checked", String(isAuto));
+  toggle.querySelector(".switch-label").textContent = isAuto ? "Auto" : "Manual";
+  // Brightness is disabled by mode as much as by reachability, so apply that
+  // here (not just in renderLighting) — a mode-toggle click needs this to
+  // take effect immediately, not wait for the next 5s poll to unlock it.
+  // On/off stays independent of mode — it's gated by reachability only, so
+  // the zone can always be switched off even while the lighting job is
+  // driving its brightness (the next auto tick may reassert brightness, but
+  // never fights an explicit on/off click).
+  const reachable = card.dataset.reachable === "true";
+  card.querySelector(".light-power").disabled = !reachable;
+  card.querySelector(".light-brightness").disabled = isAuto || !reachable;
+}
+
+function applyLightState(card, state) {
+  if (!state) return;
+  const power = card.querySelector(".light-power");
+  power.setAttribute("aria-checked", String(Boolean(state.on)));
+  power.querySelector(".switch-label").textContent = state.on ? "On" : "Off";
+  const brightness = card.querySelector(".light-brightness");
+  brightness.value = state.brightness ?? 0;
+  card.querySelector(".light-brightness-value").textContent = brightness.value;
+  if (state.color) card.querySelector(".light-color").value = rgbToHex(state.color);
+  if (state.effect !== undefined) card.querySelector(".light-effect").value = String(state.effect);
+}
+
+function renderLighting(devices, latest) {
+  const list = document.getElementById("lighting-list");
+  const empty = document.getElementById("lighting-empty");
+  const lux = latest && latest.lux;
+  for (const device of devices) {
+    if (device.type !== "wled_zone") continue;
+    if (empty) empty.remove();
+    let card = lightCards.get(device.id);
+    if (!card) {
+      card = lightCardDOM(device);
+      lightCards.set(device.id, card);
+      list.appendChild(card);
+    }
+    const mode = device.mode || "manual";
+    const isAuto = mode === "auto";
+    card.dataset.reachable = String(Boolean(device.light));
+    applyLightMode(card, mode); // also (re)applies power/brightness disabled state
+    card.querySelector(".mode-toggle").disabled = false;
+
+    const status = card.querySelector(".light-status");
+    const color = card.querySelector(".light-color");
+    const effect = card.querySelector(".light-effect");
+
+    if (device.light) {
+      // brightness (and on/off) keep reflecting the live value every poll,
+      // whether a manual edit or the auto job's last tick set it
+      applyLightState(card, device.light);
+      color.disabled = false;
+      effect.disabled = false;
+      status.textContent = isAuto
+        ? `Auto — following ambient light${lux ? ` (${Number(lux.value).toFixed(0)} lx)` : ""}.`
+        : "";
+    } else {
+      color.disabled = true;
+      effect.disabled = true;
+      status.textContent = "Zone unreachable — is it powered and on the network?";
+    }
   }
 }
 

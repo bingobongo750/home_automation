@@ -6,8 +6,9 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from . import db, poller, serial_reader
+from . import db, lighting, poller, serial_reader
 from .mystrom import PlugError
+from .wled import WledError
 
 log = logging.getLogger("api")
 
@@ -119,15 +120,33 @@ def motion_events():
     return jsonify({"events": db.motion_events(since), "count": db.motion_count(since)})
 
 
+def _wled_state_or_none(device_id: int) -> dict | None:
+    """Live read of a WLED zone's state — WLED zones aren't polled onto a
+    schedule (there's no history chart for them yet), so this hits the zone
+    directly on each /devices call."""
+    zone = lighting.zones.get(device_id)
+    if zone is None:
+        return None
+    try:
+        return zone.state()
+    except WledError as exc:
+        log.warning("WLED state fetch failed for device %d: %s", device_id, exc)
+        return None
+
+
+def _attach_device_state(device: dict) -> dict:
+    if device["type"] == "wifi_plug":
+        device["power"] = db.latest_power(device["id"])
+    elif device["type"] == "wled_zone":
+        device["light"] = _wled_state_or_none(device["id"])
+    return device
+
+
 @api.get("/devices")
 def devices():
-    """Device list, each row including its last polled power sample — one
-    call refreshes every plug widget on the dashboard."""
-    out = []
-    for device in db.list_devices():
-        device["power"] = db.latest_power(device["id"])
-        out.append(device)
-    return jsonify(out)
+    """Device list, each row including its last polled power sample (plugs)
+    or live state (WLED zones) — one call refreshes every widget/card."""
+    return jsonify([_attach_device_state(d) for d in db.list_devices()])
 
 
 @api.get("/devices/<int:device_id>")
@@ -135,8 +154,7 @@ def device_detail(device_id: int):
     device = db.get_device(device_id)
     if device is None:
         return jsonify({"error": "no such device"}), 404
-    device["power"] = db.latest_power(device_id)  # last polled state + watts
-    return jsonify(device)
+    return jsonify(_attach_device_state(device))
 
 
 @api.post("/devices/<int:device_id>/toggle")
@@ -170,6 +188,63 @@ def device_power_history(device_id: int):
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"device_id": device_id, "points": db.power_history(device_id, since)})
+
+
+@api.post("/devices/<int:device_id>/state")
+def device_state(device_id: int):
+    """Set a WLED zone's brightness/color/effect/on-off. Body: any subset of
+    {"on": bool, "brightness": 0-255, "color": [r, g, b], "effect": int}.
+    Only meaningful in 'manual' mode — in 'auto' mode the lighting job will
+    overwrite brightness/on on its next tick."""
+    device = db.get_device(device_id)
+    if device is None or device["type"] != "wled_zone":
+        return jsonify({"error": "no such WLED zone"}), 404
+    zone = lighting.zones.get(device_id)
+    if zone is None:
+        return jsonify({"error": "zone not configured"}), 404
+
+    body = request.get_json(silent=True) or {}
+    brightness = body.get("brightness")
+    if brightness is not None and not (isinstance(brightness, (int, float)) and 0 <= brightness <= 255):
+        return jsonify({"error": "brightness must be 0-255"}), 400
+    color = body.get("color")
+    if color is not None and (not isinstance(color, list) or len(color) != 3
+                               or not all(isinstance(c, (int, float)) and 0 <= c <= 255 for c in color)):
+        return jsonify({"error": "color must be [r, g, b] with each 0-255"}), 400
+    on = body.get("on")
+    if on is not None and not isinstance(on, bool):
+        return jsonify({"error": "on must be a boolean"}), 400
+    effect = body.get("effect")
+    if effect is not None and not isinstance(effect, int):
+        return jsonify({"error": "effect must be an integer"}), 400
+
+    try:
+        state = zone.set_state(
+            on=on,
+            brightness=int(brightness) if brightness is not None else None,
+            color=[int(c) for c in color] if color is not None else None,
+            effect=effect,
+        )
+    except WledError as exc:
+        log.error("WLED set_state failed for device %d: %s", device_id, exc)
+        return jsonify({"error": str(exc)}), 502
+    return jsonify(state)
+
+
+@api.post("/devices/<int:device_id>/mode")
+def device_mode(device_id: int):
+    """Set a WLED zone's mode. Body: {"mode": "manual" | "auto"}. In 'auto'
+    the lighting job (see app/lighting.py) drives brightness from the
+    latest BH1750 lux reading instead of the dashboard."""
+    device = db.get_device(device_id)
+    if device is None or device["type"] != "wled_zone":
+        return jsonify({"error": "no such WLED zone"}), 404
+    mode = (request.get_json(silent=True) or {}).get("mode")
+    if mode not in ("manual", "auto"):
+        return jsonify({"error": "mode must be 'manual' or 'auto'"}), 400
+    db.set_device_mode(device_id, mode)
+    log.info("Device %d mode set to %s", device_id, mode)
+    return jsonify({"mode": mode})
 
 
 @api.post("/arduino/command")

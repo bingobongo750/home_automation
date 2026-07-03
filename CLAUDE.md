@@ -8,8 +8,9 @@ relitigate them without a clear reason.
 
 A DIY smart home hub. An old MacBook (8GB RAM) runs 24/7 as the central server, sensor
 database, and web dashboard. An Arduino Uno handles all wired, time-sensitive I/O over a
-single USB serial connection. WiFi devices (currently one myStrom smart plug) are controlled
-directly by the host over the network — no cloud, no third-party hub, no Home Assistant.
+single USB serial connection. WiFi devices — currently two myStrom smart plugs and two
+WLED ambient-lighting zones — are controlled directly by the host over the network — no
+cloud, no third-party hub, no Home Assistant.
 
 **Hard constraint:** the host is an 8GB RAM MacBook. Never introduce video transcoding,
 AI/camera vision, Docker-heavy stacks, or anything with a large idle memory footprint.
@@ -27,11 +28,19 @@ call REST APIs.
 
 2. **WIRELESS lane** (Mac ↔ WiFi devices directly, bypassing the Arduino entirely)
    The host's server calls each WiFi device's local REST API directly over the LAN.
-   Currently: one **myStrom WiFi Switch** (Swiss Type J plug, local REST API, power
-   monitoring 2–3680W). No cloud account or app is required for runtime control, only
-   initial WiFi provisioning. Treat this integration as the first of potentially several
-   WiFi devices — design the backend's device abstraction so a second WiFi plug or a
-   WLED-based LED controller can be added without rewriting the plug logic.
+   Currently two device types:
+   - Two **myStrom WiFi Switch** plugs (Swiss Type J, local REST API, power monitoring
+     2–3680W) — "Plug 1" (Living Room) is physically installed, "Plug 2" is seeded in
+     the `devices` table as a placeholder IP until it's physically installed.
+   - Two **WLED ambient-lighting zones** ("Cupboard", "Table") — each a separate ESP32
+     running stock WLED firmware (local JSON API, no cloud), driving an addressable LED
+     strip near that zone. Both are seeded as placeholder IPs; no ESP32 is flashed yet.
+   No cloud account or app is required for runtime control, only initial WiFi
+   provisioning. Devices are modeled generically (see below) so further WiFi plugs or
+   lighting zones can register without rewriting existing device logic. **Do not confuse
+   this with the wired NeoPixel strip in the hardware inventory below** — that would be
+   a strip wired directly into the Arduino, driven over serial; WLED zones are wireless
+   ESP32 nodes and never touch the Arduino or the serial protocol.
 
 ## Hardware inventory (wired / Arduino side)
 
@@ -48,7 +57,10 @@ Use Adafruit-style breakout boards (onboard 3.3V regulation / level shifting) �
 sensor chips — since the Uno's logic is 5V.
 
 Planned/future wired additions (design for extensibility, don't build yet):
-- WS2812B/NeoPixel strip (CO2 traffic-light indicator, motion accent lighting, sunrise alarm)
+- WS2812B/NeoPixel strip wired directly to the Arduino (CO2 traffic-light indicator,
+  motion accent lighting, sunrise alarm) via `MODE:`/`COLOR:` serial commands — distinct
+  from the WLED ambient-lighting zones, which are wireless ESP32 nodes on the WIRELESS
+  lane above, not this strip
 - Opto-isolated relay module for mains ON/OFF switching
 - Logic-level MOSFET (e.g. IRLZ44N) for low-voltage LED dimming
 - OLED/e-ink display, RFID reader, water leak sensor, soil moisture sensor
@@ -96,6 +108,24 @@ before it hits the database or API layer.
   should already assume at least one WiFi plug exists and expose endpoints for it (state,
   toggle, power history) from day one.
 
+## WLED lighting integration
+
+- Each ambient-lighting zone is a separate ESP32 running stock **WLED** firmware
+  (open source, local JSON API at `/json/state`, no cloud) — same device abstraction as
+  the myStrom plug, `type = 'wled_zone'`, with an added `mode` column: `manual` or `auto`.
+- `app/wled.py` is the client (get state; push a partial on/brightness/color/effect
+  update) — mirrors `app/mystrom.py`'s shape, including a mock for `MOCK_HARDWARE=1`.
+- `app/lighting.py` is a **separate** background thread (not the plug poller, not the
+  serial reader) that, on its own interval (`LIGHTING_POLL_INTERVAL`), pushes a
+  brightness update to every zone currently in `auto` mode based on the latest BH1750
+  `lux` reading already in the DB: below `LIGHTING_LUX_THRESHOLD` it turns the zone on to
+  `LIGHTING_AUTO_BRIGHTNESS`; at/above it, it turns the zone off. All three are env vars,
+  not hardcoded. Zones in `manual` mode are left alone — the dashboard drives those
+  directly via `POST /api/devices/:id/state`.
+- Physical setup (flashing WLED, wiring the strip, static IP) happens later — the
+  backend, database schema, and API already assume both zones exist from day one, same
+  as the myStrom plug.
+
 ## Host stack
 
 - Server: Python/Flask (lightweight, easy serial + REST integration, low idle footprint
@@ -108,29 +138,57 @@ before it hits the database or API layer.
   — don't assume the DB has to live on the internal drive.
 - No MQTT broker yet — single Arduino node for now. Keep the device/data layer decoupled
   enough that adding Mosquitto later for multi-room nodes doesn't require a rewrite.
+- `MOCK_HARDWARE=1` env var (see `.env.example`) swaps the serial reader, the myStrom
+  client, and the WLED client for fake data generators (plausible sinusoidal sensor
+  drift, wobbling plug wattage, in-memory zone state) so the dashboard is developable
+  end-to-end without any hardware attached. Keep this mode working when touching
+  `serial_reader.py`, `mystrom.py`, or `wled.py`.
 
-## API shape (backend, minimum viable)
+## API shape (backend)
 
-Design REST (or simple JSON) endpoints along these lines — adjust naming as needed, but
-keep the shape:
+Implemented in `server/app/api.py` — keep this list in sync when endpoints change:
 
 - `GET /api/sensors/latest` — most recent reading per sensor
-- `GET /api/sensors/history?metric=temp&range=24h` — time series for charts
-- `GET /api/devices` — list known devices (currently: the myStrom plug)
-- `GET /api/devices/:id` — device state + latest power draw
+- `GET /api/sensors/history?metric=temp&range=24h` — time series for charts (range: `30m`/`24h`/`7d` style)
+- `GET /api/sensors/stats?metric=temp` — 24h min/max/avg + 7d avg, for a widget's expanded view
+- `GET /api/sensors/profile?metric=temp&bucket=30` — "typical day" curve: 7-day average per time-of-day bucket
+- `GET /api/motion/events?range=24h` — recent motion detections + count, for the activity log
+- `GET /api/devices` — list known devices (two myStrom plugs, two WLED zones); plug rows carry `power` (last polled sample), WLED rows carry `mode` and `light` (live state)
+- `GET /api/devices/:id` — device row with the same per-type fields as above
 - `POST /api/devices/:id/toggle` — turn a WiFi plug on/off
+- `GET /api/devices/:id/power/stats` — 24h/7d average draw + estimated 24h kWh
 - `GET /api/devices/:id/power/history` — power draw over time
+- `POST /api/devices/:id/state` — set a WLED zone's on/brightness/color/effect (any subset)
+- `POST /api/devices/:id/mode` — set a WLED zone's mode: `manual` or `auto`
+- `GET/PUT /api/settings/thresholds` — alert thresholds (min/max per metric + plug power draw); a reading outside its band flags that widget on the dashboard
+- `POST /api/arduino/command` — send a raw `KEY:VALUE` protocol line to the Arduino (exists for any future wired actuator and manual testing; WLED zones do not use this)
 
 ## Frontend
 
-- Dark theme, sleek, intentional — not a default Bootstrap/Tailwind look. Consult the
-  `frontend-design` skill before writing UI code for aesthetic direction and design
-  tokens.
-- Tabbed layout, one tab per functional area, not one long scrolling dashboard:
-  - **Room Conditions** — temp, humidity, light, CO2 (live values + short history charts)
-  - **Power** — plug on/off control, current draw, power history/graph
-  - **Motion / Presence** — PIR status, recent activity log
-  - Reserve tab structure for later: **Lighting** (once WS2812B control ships)
+- Dark theme: a PCB soldermask/silkscreen look (deep green-black surfaces, copper accent,
+  mono silkscreen labels, a live "RX" serial ticker replaying raw `KEY:VALUE` lines) — this
+  visual language is approved, keep it when touching the dashboard. Consult the
+  `frontend-design` skill for direction on any new surface.
+- **Single-page layout, not tabs** — one scrolling page of widgets grouped into `.zone`
+  sections: **Room conditions** (temp/humidity/light/CO2), **Power** (one plug-pair per
+  WiFi plug: switch + power widget), **Lighting** (one card per WLED zone), **Motion**
+  (PIR status + activity log). Any further device type should follow the same pattern:
+  another `.zone` of widgets/cards on this same page, never a new tab.
+- Each Lighting card's top-right switch is always the zone's physical on/off, and it
+  stays clickable in both modes — a user can switch a zone off even while it's in
+  `auto` (the lighting job may reassert brightness/on on its next tick, but a manual
+  on/off click is never blocked by mode). Mode (`manual`/`auto`) is one of the control
+  rows alongside brightness/color/effect. In `auto` mode only the brightness control
+  goes read-only (the lighting job drives it from lux) but keeps displaying the live
+  value every poll rather than freezing or disappearing; color/effect stay editable in
+  either mode since the auto job never
+  touches them.
+- Each widget expands on click into an **overlay dialog** (detail view: range-scoped chart,
+  min/max/avg stats, "typical now" 7d-avg-by-time-of-day) rather than expanding in place —
+  in-place expansion was rejected because it reflowed the grid out from under the cursor.
+  Never make widget interaction shift the board layout.
+- An alert-thresholds settings dialog (gear icon) lets the min/max band per metric (and
+  plug power draw) be edited; a reading outside its band flags that widget on the board.
 - Keep it a single lightweight web app served by the host — no separate build
   infrastructure beyond what's needed for a small SPA or server-rendered pages.
 - Live-ish updates (short polling interval or simple WebSocket) rather than manual

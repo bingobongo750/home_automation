@@ -25,19 +25,42 @@ unix epoch seconds (UTC); the dashboard formats them client-side.
 
 ## Devices
 
-- `GET /devices` → array of `{id, name, type, ip, room, power}` where `power`
-  is the last polled `{ts, watts, relay_on}` (or `null`) — one call refreshes
-  every plug widget.
-- `GET /devices/:id` → device row plus `"power": {"ts", "watts", "relay_on"}`
-  (last polled sample, `null` if never polled).
-- `POST /devices/:id/toggle` → `{"relay_on": true|false}` (new state).
-  `502` with `{"error": ...}` if the plug is unreachable.
-- `GET /devices/:id/power/history?range=24h` →
+Two device types exist so far, both WiFi (never routed through the
+Arduino/serial lane): `wifi_plug` (myStrom) and `wled_zone` (ambient
+lighting, stock WLED firmware on an ESP32 — see "Lighting" below).
+
+- `GET /devices` → array of `{id, name, type, ip, room, ...}`. `wifi_plug`
+  rows include `"power"` (last polled `{ts, watts, relay_on}`, or `null`).
+  `wled_zone` rows include `"mode"` (`"manual"|"auto"`) and `"light"` (live
+  `{on, brightness, color, effect}`, or `null` if the zone is unreachable).
+  One call refreshes every plug widget and lighting card.
+- `GET /devices/:id` → same per-type shape as one row above.
+- `POST /devices/:id/toggle` → *wifi_plug only.* `{"relay_on": true|false}`
+  (new state). `502` with `{"error": ...}` if the plug is unreachable.
+- `GET /devices/:id/power/history?range=24h` → *wifi_plug only.*
   `{"device_id": ..., "points": [{"ts", "watts"}, ...]}` — same range/
   downsampling rules as sensor history.
-- `GET /devices/:id/power/stats` → `{"avg_24h_w", "kwh_24h", "avg_7d_w"}` —
-  `kwh_24h` is average draw integrated over the hours actually covered by
-  samples, so it's an estimate (≈) rather than metered energy.
+- `GET /devices/:id/power/stats` → *wifi_plug only.*
+  `{"avg_24h_w", "kwh_24h", "avg_7d_w"}` — `kwh_24h` is average draw
+  integrated over the hours actually covered by samples, so it's an
+  estimate (≈) rather than metered energy.
+
+## Lighting (WLED zones)
+
+- `POST /devices/:id/state` → *wled_zone only.* Body: any subset of
+  `{"on": bool, "brightness": 0-255, "color": [r, g, b], "effect": <int>}`.
+  Pushes a partial update to the zone and returns its resulting
+  `{on, brightness, color, effect}`. `400` on out-of-range values, `502` if
+  the zone is unreachable. Only meaningful in `manual` mode — in `auto`
+  mode the lighting job (see below) overwrites `on`/`brightness` on its
+  next tick.
+- `POST /devices/:id/mode` → *wled_zone only.* Body: `{"mode": "manual"|"auto"}`.
+  In `auto` mode, a background job (independent of sensor ingestion and
+  plug polling — see `app/lighting.py`) reads the latest BH1750 `lux`
+  reading every `LIGHTING_POLL_INTERVAL` seconds and pushes brightness to
+  the zone: below `LIGHTING_LUX_THRESHOLD` it turns on to
+  `LIGHTING_AUTO_BRIGHTNESS`; at/above it, it turns the zone off. All three
+  are env vars (`.env`), not hardcoded.
 
 ## Settings
 
@@ -54,8 +77,10 @@ unix epoch seconds (UTC); the dashboard formats them client-side.
 
 - `POST /arduino/command`, body `{"command": "RELAY1:ON"}` — writes one raw
   protocol line to the Arduino (see `serial-protocol.md`). `502` if the
-  serial port isn't connected. This is the seam the future Lighting tab will
-  use (`MODE:`, `COLOR:`).
+  serial port isn't connected. Exists for any future wired actuator (relay,
+  MOSFET dimmer) and manual testing. Ambient lighting (WLED zones, above)
+  does **not** use this — it's a WiFi device controlled directly, same lane
+  as the myStrom plugs.
 
 ## Errors
 

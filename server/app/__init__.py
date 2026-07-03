@@ -1,12 +1,13 @@
-"""Flask app factory. Starts the two background threads (serial reader,
-plug poller) and serves both the JSON API and the static dashboard."""
+"""Flask app factory. Starts the background threads (serial reader, plug
+poller, auto-lighting job) and serves both the JSON API and the static
+dashboard."""
 
 import logging
 from pathlib import Path
 
 from flask import Flask
 
-from . import config, db, poller, serial_reader
+from . import config, db, lighting, poller, serial_reader
 from .api import api
 
 DASHBOARD_DIR = Path(__file__).resolve().parent.parent.parent / "dashboard"
@@ -26,6 +27,7 @@ def create_app() -> Flask:
 
     serial_reader.start()
     poller.start()
+    lighting.start()
 
     app = Flask(
         __name__,

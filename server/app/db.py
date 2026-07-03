@@ -11,7 +11,7 @@ writer-at-a-time from blocking each other.
 Tables
 ------
 readings        sensor time series from the Arduino (metric = temp/hum/lux/co2/motion)
-devices         generic device registry (currently one wifi_plug row)
+devices         generic device registry (wifi_plug and wled_zone rows so far)
 power_readings  plug power/state time series, keyed to devices.id
 """
 
@@ -34,9 +34,10 @@ CREATE INDEX IF NOT EXISTS idx_readings_metric_ts ON readings (metric, ts);
 CREATE TABLE IF NOT EXISTS devices (
     id   INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
-    type TEXT NOT NULL,             -- wifi_plug | (future: wled, ...)
+    type TEXT NOT NULL,             -- wifi_plug | wled_zone
     ip   TEXT,
-    room TEXT
+    room TEXT,
+    mode TEXT                       -- wled_zone only: manual | auto
 );
 
 CREATE TABLE IF NOT EXISTS power_readings (
@@ -79,11 +80,22 @@ PLUG_SEEDS = [
     ("Plug 2", config.MYSTROM_PLUG2_IP, "Unassigned"),
 ]
 
+# Same idea for WLED lighting zones. More zones: add a row here (and an IP
+# in .env) — the auto-lighting job and dashboard pick them up.
+WLED_SEEDS = [
+    ("Cupboard", config.WLED_CUPBOARD_IP, "Kitchen"),
+    ("Table", config.WLED_TABLE_IP, "Living Room"),
+]
+
 
 def init_db() -> None:
     Path(config.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # migration: 'mode' column added when wled_zone devices were introduced
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(devices)")}
+        if "mode" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN mode TEXT")
         # legacy name from the first schema revision
         conn.execute("UPDATE devices SET name = 'Plug 1' WHERE name = 'myStrom Plug'")
         for name, ip, room in PLUG_SEEDS:
@@ -93,6 +105,16 @@ def init_db() -> None:
             if exists is None:
                 conn.execute(
                     "INSERT INTO devices (name, type, ip, room) VALUES (?, 'wifi_plug', ?, ?)",
+                    (name, ip, room),
+                )
+        for name, ip, room in WLED_SEEDS:
+            exists = conn.execute(
+                "SELECT 1 FROM devices WHERE name = ?", (name,)
+            ).fetchone()
+            if exists is None:
+                conn.execute(
+                    """INSERT INTO devices (name, type, ip, room, mode)
+                       VALUES (?, 'wled_zone', ?, ?, 'manual')""",
                     (name, ip, room),
                 )
 
@@ -277,6 +299,13 @@ def get_device(device_id: int) -> dict | None:
     with connect() as conn:
         row = conn.execute("SELECT * FROM devices WHERE id = ?", (device_id,)).fetchone()
     return dict(row) if row else None
+
+
+def set_device_mode(device_id: int, mode: str) -> None:
+    """wled_zone only: 'manual' (dashboard controls it) or 'auto' (the
+    lighting job drives brightness from lux)."""
+    with connect() as conn:
+        conn.execute("UPDATE devices SET mode = ? WHERE id = ?", (mode, device_id))
 
 
 def latest_power(device_id: int) -> dict | None:
