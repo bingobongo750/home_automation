@@ -1,0 +1,31 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# --- Environment / secrets ---
+.env
+
+# --- SQLite databases (live data, not source) ---
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Arduino build artifacts ---
+firmware/**/build/
+*.hex
+*.elf
+*.bin
+
+# --- Frontend build artifacts (none expected, but just in case) ---
+node_modules/
+dist/
+
+# --- OS noise ---
+.DS_Store

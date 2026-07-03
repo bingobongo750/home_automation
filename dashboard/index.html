@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUB-01 — Home Hub</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23161b17'/><circle cx='8' cy='8' r='3.5' fill='none' stroke='%23d29455' stroke-width='1.5'/><circle cx='8' cy='8' r='1' fill='%23d29455'/></svg>">
+</head>
+<body>
+
+<header class="board-header">
+  <div class="header-row">
+    <h1 class="board-name">HUB-01 <span class="board-sub">home hub · one room, no cloud</span></h1>
+    <div class="link-status" id="link-status" title="Backend connection">
+      <span class="link-dot" id="link-dot"></span><span id="link-label">connecting</span>
+    </div>
+  </div>
+  <!-- Signature element: the live wire. Reconstructs the actual serial
+       protocol lines (TEMP:, HUM:, …) from the latest readings. -->
+  <div class="serial-ticker" aria-label="Latest raw sensor readings">
+    <span class="rx-tag">RX</span>
+    <code id="serial-line" class="serial-line">waiting for first reading…</code>
+  </div>
+</header>
+
+<main>
+  <!-- Every .widget expands on click to show history + stats.
+       Future Lighting section: add another .zone here. -->
+
+  <section class="zone">
+    <h2 class="zone-label">Room conditions</h2>
+    <div class="widget-grid" id="room-grid">
+
+      <article class="widget" data-widget="metric" data-metric="temp" tabindex="0" aria-expanded="false">
+        <header class="card-head">
+          <h3 class="card-label">Temperature</h3>
+          <span class="head-right"><code class="wire-key">TEMP</code><span class="expand-hint" aria-hidden="true">⤢</span></span>
+        </header>
+        <p class="metric-value"><span class="value">—</span><span class="unit">°C</span></p>
+        <div class="spark" aria-hidden="true"></div>
+        <div class="widget-detail" hidden>
+          <div class="detail-range" role="group" aria-label="History range">
+            <button class="range-btn" data-range="3h">3h</button>
+            <button class="range-btn active" data-range="24h">24h</button>
+            <button class="range-btn" data-range="7d">7d</button>
+          </div>
+          <div class="chart chart-tall"></div>
+          <dl class="stat-row">
+            <div><dt>Min 24h</dt><dd data-stat="min_24h">—</dd></div>
+            <div><dt>Max 24h</dt><dd data-stat="max_24h">—</dd></div>
+            <div><dt>Avg 24h</dt><dd data-stat="avg_24h">—</dd></div>
+            <div><dt>Typical now</dt><dd data-stat="typical_now" title="7-day average at this time of day">—</dd></div>
+          </dl>
+        </div>
+      </article>
+
+      <article class="widget" data-widget="metric" data-metric="hum" tabindex="0" aria-expanded="false">
+        <header class="card-head">
+          <h3 class="card-label">Humidity</h3>
+          <span class="head-right"><code class="wire-key">HUM</code><span class="expand-hint" aria-hidden="true">⤢</span></span>
+        </header>
+        <p class="metric-value"><span class="value">—</span><span class="unit">%RH</span></p>
+        <div class="spark" aria-hidden="true"></div>
+        <div class="widget-detail" hidden>
+          <div class="detail-range" role="group" aria-label="History range">
+            <button class="range-btn" data-range="3h">3h</button>
+            <button class="range-btn active" data-range="24h">24h</button>
+            <button class="range-btn" data-range="7d">7d</button>
+          </div>
+          <div class="chart chart-tall"></div>
+          <dl class="stat-row">
+            <div><dt>Min 24h</dt><dd data-stat="min_24h">—</dd></div>
+            <div><dt>Max 24h</dt><dd data-stat="max_24h">—</dd></div>
+            <div><dt>Avg 24h</dt><dd data-stat="avg_24h">—</dd></div>
+            <div><dt>Typical now</dt><dd data-stat="typical_now" title="7-day average at this time of day">—</dd></div>
+          </dl>
+        </div>
+      </article>
+
+      <article class="widget" data-widget="metric" data-metric="lux" tabindex="0" aria-expanded="false">
+        <header class="card-head">
+          <h3 class="card-label">Light level</h3>
+          <span class="head-right"><code class="wire-key">LUX</code><span class="expand-hint" aria-hidden="true">⤢</span></span>
+        </header>
+        <p class="metric-value"><span class="value">—</span><span class="unit">lx</span></p>
+        <div class="spark" aria-hidden="true"></div>
+        <div class="widget-detail" hidden>
+          <div class="detail-range" role="group" aria-label="History range">
+            <button class="range-btn" data-range="3h">3h</button>
+            <button class="range-btn active" data-range="24h">24h</button>
+            <button class="range-btn" data-range="7d">7d</button>
+          </div>
+          <div class="chart chart-tall"></div>
+          <dl class="stat-row">
+            <div><dt>Min 24h</dt><dd data-stat="min_24h">—</dd></div>
+            <div><dt>Max 24h</dt><dd data-stat="max_24h">—</dd></div>
+            <div><dt>Avg 24h</dt><dd data-stat="avg_24h">—</dd></div>
+            <div><dt>Typical now</dt><dd data-stat="typical_now" title="7-day average at this time of day">—</dd></div>
+          </dl>
+        </div>
+      </article>
+
+      <article class="widget" data-widget="metric" data-metric="co2" tabindex="0" aria-expanded="false">
+        <header class="card-head">
+          <h3 class="card-label">CO₂</h3>
+          <span class="head-right"><code class="wire-key">CO2</code><span class="expand-hint" aria-hidden="true">⤢</span></span>
+        </header>
+        <p class="metric-value"><span class="value">—</span><span class="unit">ppm</span></p>
+        <div class="spark" aria-hidden="true"></div>
+        <div class="widget-detail" hidden>
+          <div class="detail-range" role="group" aria-label="History range">
+            <button class="range-btn" data-range="3h">3h</button>
+            <button class="range-btn active" data-range="24h">24h</button>
+            <button class="range-btn" data-range="7d">7d</button>
+          </div>
+          <div class="chart chart-tall"></div>
+          <dl class="stat-row">
+            <div><dt>Min 24h</dt><dd data-stat="min_24h">—</dd></div>
+            <div><dt>Max 24h</dt><dd data-stat="max_24h">—</dd></div>
+            <div><dt>Avg 24h</dt><dd data-stat="avg_24h">—</dd></div>
+            <div><dt>Typical now</dt><dd data-stat="typical_now" title="7-day average at this time of day">—</dd></div>
+          </dl>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section class="zone">
+    <h2 class="zone-label">Power</h2>
+    <!-- One .plug-pair per wifi_plug device, built by app.js from /api/devices:
+         a switch card and a clickable power widget, side by side. -->
+    <div class="plug-list" id="plug-list">
+      <p class="zone-empty" id="plug-empty">Looking for plugs…</p>
+    </div>
+  </section>
+
+  <section class="zone">
+    <h2 class="zone-label">Motion</h2>
+    <div class="widget-grid single">
+      <article class="widget" data-widget="motion" tabindex="0" aria-expanded="false">
+        <header class="card-head">
+          <h3 class="card-label">Presence</h3>
+          <span class="head-right"><code class="wire-key">MOTION</code><span class="expand-hint" aria-hidden="true">⤢</span></span>
+        </header>
+        <div class="pir-state" id="pir-state">
+          <span class="pir-lamp" id="pir-lamp"></span>
+          <span class="pir-label" id="pir-label">no data</span>
+        </div>
+        <p class="card-note" id="pir-note">HC-SR501 on pin D2.</p>
+        <div class="widget-detail" hidden>
+          <div class="detail-range" role="group" aria-label="Activity range">
+            <button class="range-btn" data-range="3h">3h</button>
+            <button class="range-btn active" data-range="24h">24h</button>
+            <button class="range-btn" data-range="7d">7d</button>
+          </div>
+          <dl class="stat-row">
+            <div><dt>Events in range</dt><dd data-stat="count">—</dd></div>
+            <div><dt>Last event</dt><dd data-stat="last">—</dd></div>
+          </dl>
+          <ol class="activity-log" id="activity-log">
+            <li class="log-empty">No motion in this range yet.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+  </section>
+</main>
+
+<!-- Widget detail dialog: opens on top of the board so nothing reflows.
+     app.js moves the clicked widget's .widget-detail node in here. -->
+<div class="detail-overlay" id="detail-overlay" hidden>
+  <div class="detail-backdrop" id="detail-backdrop"></div>
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="detail-title"></h3>
+        <code class="wire-key" id="detail-key"></code>
+      </div>
+      <button class="detail-close" id="detail-close" aria-label="Close">×</button>
+    </header>
+    <div class="detail-body" id="detail-body"></div>
+  </div>
+</div>
+
+<div class="chart-tooltip" id="chart-tooltip" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

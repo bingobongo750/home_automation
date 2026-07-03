@@ -1,0 +1,497 @@
+/* HUB-01 dashboard — soldermask & silkscreen.
+   Deep PCB-green surfaces, off-white silkscreen ink, one copper accent.
+   Chart series colors validated (dataviz six checks) against --surface.
+   Layout: one page, widgets grouped in zones; widgets expand on click. */
+
+:root {
+  --page: #0e120f;          /* board substrate */
+  --surface: #161b17;       /* soldermask card */
+  --surface-2: #1d231e;     /* raised soldermask (hover, tracks) */
+  --ink: #e9ede6;           /* silkscreen */
+  --ink-2: #a7b0a3;
+  --muted: #8b948a;
+  --hairline: rgba(233, 237, 230, 0.09);
+  --grid: #232a24;          /* chart gridline, one step off surface */
+  --baseline: #333b34;
+  --copper: #d29455;        /* accent: ENIG pad */
+  --copper-dim: rgba(210, 148, 85, 0.14);
+
+  /* series (validated dark-mode set) */
+  --s-temp: #3987e5;
+  --s-hum: #199e70;
+  --s-lux: #c98500;
+  --s-co2: #9085e9;
+  --s-power: #c1763a;
+
+  --good: #0ca30c;
+  --critical: #d03b3b;
+
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+button:focus-visible, .widget:focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- header */
+
+.board-header {
+  padding: 20px 28px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.header-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.board-name {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+
+.board-sub {
+  font-family: var(--sans);
+  font-weight: 400;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+  margin-left: 10px;
+}
+
+.link-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.link-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.link-status.online .link-dot { background: var(--good); }
+.link-status.offline .link-dot { background: var(--critical); }
+
+/* the live wire — raw serial protocol lines, as sent by the Arduino */
+.serial-ticker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 9px 0 11px;
+  border-top: 1px solid var(--hairline);
+  overflow: hidden;
+}
+
+.rx-tag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--copper);
+  border: 1px solid var(--copper-dim);
+  background: var(--copper-dim);
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+
+.serial-line {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.serial-line .k { color: var(--copper); }
+.serial-line .sep { color: var(--baseline); margin: 0 10px; }
+
+/* ----------------------------------------------------------------- zones */
+
+main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
+
+.zone { margin-top: 26px; }
+
+/* silkscreen section label */
+.zone-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.zone-label::before {
+  content: "";
+  width: 14px; height: 1px;
+  background: var(--copper);
+}
+.zone-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.zone-empty { color: var(--muted); font-size: 13px; margin: 4px 0; }
+
+/* --------------------------------------------------------------- widgets */
+
+.widget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(276px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.widget-grid.single { grid-template-columns: minmax(276px, 672px); }
+
+.card, .widget {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 19px 22px 17px;
+}
+
+.widget { cursor: pointer; transition: border-color 0.12s ease; }
+.widget:hover { border-color: rgba(233, 237, 230, 0.2); }
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.card-label {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}
+
+.head-right { display: flex; align-items: center; gap: 8px; }
+
+/* silkscreen reference designator */
+.wire-key {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+
+.expand-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.widget:hover .expand-hint { color: var(--copper); }
+
+.card-note { margin: 10px 0 0; font-size: 13.5px; color: var(--muted); }
+
+.metric-value {
+  margin: 2px 0 10px;
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 38px;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.metric-value .unit {
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.metric-value.stale .value { color: var(--muted); }
+
+.spark { height: 44px; }
+.spark svg { display: block; width: 100%; height: 100%; }
+
+/* -------------------------------------------------- detail overlay dialog */
+
+.detail-overlay { position: fixed; inset: 0; z-index: 20; }
+.detail-overlay[hidden] { display: none; }
+
+.detail-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 8, 6, 0.72);
+}
+
+.detail-panel {
+  position: relative;
+  margin: 7vh auto 0;
+  width: min(860px, 94vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid rgba(233, 237, 230, 0.16);
+  border-radius: 12px;
+  padding: 18px 22px 20px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  animation: panel-in 0.14s ease;
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.detail-title-group { display: flex; align-items: baseline; gap: 10px; }
+.detail-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.detail-close {
+  font-size: 22px;
+  line-height: 1;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.detail-close:hover { color: var(--ink); background: var(--surface-2); }
+
+.widget-detail { margin-top: 10px; }
+.widget-detail[hidden] { display: none; }
+
+.chart-legend {
+  display: flex;
+  gap: 18px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.chart-legend .line-key {
+  display: inline-block;
+  width: 16px; height: 0;
+  border-top: 2px solid;
+  vertical-align: middle;
+  margin-right: 6px;
+  border-radius: 1px;
+}
+
+.detail-range {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--page);
+  margin-bottom: 12px;
+}
+
+.range-btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding: 3px 10px;
+  border-radius: 5px;
+}
+.range-btn:hover { color: var(--ink-2); }
+.range-btn.active { color: var(--page); background: var(--copper); font-weight: 700; }
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 10px;
+  margin: 14px 0 0;
+}
+.stat-row dt {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.stat-row dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.stat-row dd .unit { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
+
+/* ---------------------------------------------------------------- charts */
+
+.chart { position: relative; height: 130px; }
+.chart-tall { height: 240px; }
+.chart svg { display: block; width: 100%; height: 100%; }
+
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.chart-tooltip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.chart-tooltip .tt-value {
+  display: block;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ----------------------------------------------------------------- plugs */
+
+.plug-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(564px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 660px) { .plug-list { grid-template-columns: 1fr; } }
+
+/* switch card + power widget, side by side */
+.plug-pair {
+  display: grid;
+  grid-template-columns: 246px 1fr;
+  gap: 16px;
+  align-items: stretch;
+}
+@media (max-width: 660px) { .plug-pair { grid-template-columns: 1fr; } }
+
+.plug-room { margin: 0 0 14px; font-size: 12.5px; color: var(--muted); }
+
+.plug-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+.plug-switch[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+.switch-track {
+  display: inline-block;
+  flex: none;
+  width: 52px; height: 28px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  position: relative;
+  transition: background 0.15s ease;
+}
+.switch-thumb {
+  position: absolute;
+  top: 3px; left: 3px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.plug-switch[aria-checked="true"] .switch-track { background: var(--copper-dim); border-color: var(--copper); }
+.plug-switch[aria-checked="true"] .switch-thumb { transform: translateX(24px); background: var(--copper); }
+
+.switch-label { font-size: 14px; color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- motion */
+
+.pir-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 4px;
+}
+
+.pir-lamp {
+  width: 17px; height: 17px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+}
+.pir-state.active .pir-lamp {
+  background: var(--copper);
+  border-color: var(--copper);
+  box-shadow: 0 0 12px rgba(210, 148, 85, 0.5);
+}
+
+.pir-label {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.pir-state.active .pir-label { color: var(--copper); }
+
+.activity-log {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.activity-log li {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.activity-log li:last-child { border-bottom: none; }
+.activity-log .log-time { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.activity-log .log-empty { color: var(--muted); border-bottom: none; }
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 640px) {
+  .board-header, main { padding-left: 16px; padding-right: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
