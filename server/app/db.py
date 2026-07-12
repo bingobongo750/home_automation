@@ -1,7 +1,8 @@
 """SQLite layer: schema, and all read/write helpers.
 
 Includes a small key/value `settings` table (JSON values) used for alert
-thresholds; defaults live in DEFAULT_THRESHOLDS below.
+thresholds, the active house-mode scene, and the last overnight summary;
+threshold defaults live in DEFAULT_THRESHOLDS below.
 
 Every helper opens a short-lived connection so the serial thread, the plug
 poller thread, and Flask request handlers can all touch the DB without
@@ -13,6 +14,10 @@ Tables
 readings        sensor time series from the Arduino (metric = temp/hum/lux/co2/motion)
 devices         generic device registry (wifi_plug and wled_zone rows so far)
 power_readings  plug power/state time series, keyed to devices.id
+scenes          house modes (Sleeping/Day/Away): per-device target states as JSON
+
+The planner's tables (events, tasks) are owned by app/planner.py — that
+module carries its own DDL and init_db(), called alongside this one.
 """
 
 import json
@@ -54,6 +59,12 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL               -- JSON blob
 );
+
+CREATE TABLE IF NOT EXISTS scenes (
+    id     INTEGER PRIMARY KEY,
+    name   TEXT NOT NULL UNIQUE,
+    states TEXT NOT NULL              -- JSON: device name -> partial target state
+);
 """
 
 # Alert thresholds: a reading outside [min, max] flags its widget on the
@@ -88,6 +99,48 @@ WLED_SEEDS = [
     ("Table", config.WLED_TABLE_IP, "Living Room"),
 ]
 
+# Default house-mode scenes (see app/scenes.py). States are keyed either by
+# a group key — "all_plugs" / "all_zones", applying to EVERY device of that
+# type, present and future — or by a device *name* (the stable seed key
+# above), which overrides the group's fields for that one device. Each value
+# is a partial target; fields a scene doesn't mention are left alone. Rows
+# are only inserted when missing, so edits to a scene's states in the DB
+# survive restarts. Note "Day" deliberately has no zone targets: activating
+# it lifts the auto-lighting suppression, so any zone whose mode is 'auto'
+# resumes lux-driven brightness, and 'manual' zones stay as they are.
+# Locked plugs are always skipped, whatever the scene says.
+SCENE_SEEDS = {
+    "Sleeping": {
+        "all_plugs": {"on": False},
+        "all_zones": {"on": False},
+    },
+    "Day": {
+        "all_plugs": {"on": True},
+    },
+    "Away": {
+        "all_plugs": {"on": False},
+        "all_zones": {"on": False},
+    },
+}
+
+# Earlier seed revisions (night-light Sleeping, then per-name device lists).
+# init_db swaps a stored row that still exactly matches any of these for the
+# current SCENE_SEEDS entry — a hand-edited row is left alone.
+_LEGACY_SCENE_STATES = {
+    "Sleeping": [
+        {"Plug 1": {"on": False},
+         "Cupboard": {"on": True, "brightness": 40, "color": [255, 120, 40]},
+         "Table": {"on": False}},
+        {"Plug 1": {"on": False}, "Cupboard": {"on": False}, "Table": {"on": False}},
+    ],
+    "Day": [
+        {"Plug 1": {"on": True}},
+    ],
+    "Away": [
+        {"Plug 1": {"on": False}, "Cupboard": {"on": False}, "Table": {"on": False}},
+    ],
+}
+
 
 def init_db() -> None:
     Path(config.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -120,15 +173,48 @@ def init_db() -> None:
                        VALUES (?, 'wled_zone', ?, ?, 'manual')""",
                     (name, ip, room),
                 )
+        for name, states in SCENE_SEEDS.items():
+            exists = conn.execute(
+                "SELECT 1 FROM scenes WHERE name = ?", (name,)
+            ).fetchone()
+            if exists is None:
+                conn.execute(
+                    "INSERT INTO scenes (name, states) VALUES (?, ?)",
+                    (name, json.dumps(states)),
+                )
+        # rows still on an earlier seed revision -> current defaults
+        for name, legacy_revisions in _LEGACY_SCENE_STATES.items():
+            row = conn.execute(
+                "SELECT states FROM scenes WHERE name = ?", (name,)
+            ).fetchone()
+            if row and json.loads(row["states"]) in legacy_revisions:
+                conn.execute(
+                    "UPDATE scenes SET states = ? WHERE name = ?",
+                    (json.dumps(SCENE_SEEDS[name]), name),
+                )
 
 
 # ----------------------------------------------------------------- settings
 
+def get_setting(key: str):
+    """JSON value from the settings table, or None if the key isn't set."""
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return json.loads(row["value"]) if row else None
+
+
+def set_setting(key: str, value) -> None:
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO settings (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (key, json.dumps(value)),
+        )
+
+
 def get_thresholds() -> dict:
     """Saved thresholds merged over the defaults (so new keys get defaults)."""
-    with connect() as conn:
-        row = conn.execute("SELECT value FROM settings WHERE key = 'thresholds'").fetchone()
-    saved = json.loads(row["value"]) if row else {}
+    saved = get_setting("thresholds") or {}
     out = {}
     for key, default in DEFAULT_THRESHOLDS.items():
         entry = saved.get(key, {})
@@ -138,12 +224,28 @@ def get_thresholds() -> dict:
 
 
 def set_thresholds(thresholds: dict) -> None:
-    with connect() as conn:
-        conn.execute(
-            """INSERT INTO settings (key, value) VALUES ('thresholds', ?)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
-            (json.dumps(thresholds),),
-        )
+    set_setting("thresholds", thresholds)
+
+
+def get_active_scene() -> dict | None:
+    """{"name", "activated_at", "wake_time", "wake_at"} for the current house
+    mode, or None if no scene has ever been activated (the backend treats
+    that as "Day" — normal operation, auto lighting enabled)."""
+    return get_setting("active_scene")
+
+
+def set_active_scene(name: str, activated_at: float,
+                     wake_time: str | None = None,
+                     wake_at: float | None = None) -> None:
+    """Persist the active scene (plus a pending Sleeping->Day wake, if any)
+    so it survives backend restarts — app/scenes.py re-arms the wake timer
+    from this record at startup."""
+    set_setting("active_scene", {
+        "name": name,
+        "activated_at": activated_at,
+        "wake_time": wake_time,   # "HH:MM" as entered, for display
+        "wake_at": wake_at,       # resolved unix timestamp the timer fires at
+    })
 
 
 # ------------------------------------------------------------- sensor writes
@@ -268,26 +370,80 @@ def metric_daily_profile(metric: str, days: int = 7, bucket_minutes: int = 30) -
     ]
 
 
-def motion_count(since: float) -> int:
+def motion_count(since: float, until: float | None = None) -> int:
     with connect() as conn:
         row = conn.execute(
-            "SELECT COUNT(*) AS n FROM readings WHERE metric = 'motion' AND value = 1 AND ts >= ?",
-            (since,),
+            """SELECT COUNT(*) AS n FROM readings
+               WHERE metric = 'motion' AND value = 1 AND ts >= ? AND ts <= ?""",
+            (since, until if until is not None else time.time()),
         ).fetchone()
     return row["n"]
 
 
-def motion_events(since: float, limit: int = 50) -> list[dict]:
+def motion_events(since: float, limit: int = 50, until: float | None = None) -> list[dict]:
     """Recent motion-detected timestamps (value 1 rows), newest first,
     collapsed so a continuous HIGH period reports once per report tick."""
     with connect() as conn:
         rows = conn.execute(
             """SELECT ts FROM readings
-               WHERE metric = 'motion' AND value = 1 AND ts >= ?
+               WHERE metric = 'motion' AND value = 1 AND ts >= ? AND ts <= ?
                ORDER BY ts DESC LIMIT ?""",
-            (since, limit),
+            (since, until if until is not None else time.time(), limit),
         ).fetchall()
     return [{"ts": r["ts"]} for r in rows]
+
+
+def metric_window_stats(metric: str, since: float, until: float) -> dict:
+    """min/max/avg for one metric over an arbitrary window — used by the
+    overnight (Sleeping->Day) summary in app/scenes.py."""
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT MIN(value) AS mn, MAX(value) AS mx, AVG(value) AS av
+               FROM readings WHERE metric = ? AND ts >= ? AND ts <= ?""",
+            (metric, since, until),
+        ).fetchone()
+
+    def rnd(v):
+        return round(v, 1) if v is not None else None
+
+    return {"min": rnd(row["mn"]), "max": rnd(row["mx"]), "avg": rnd(row["av"])}
+
+
+def metric_window_endpoints(metric: str, since: float, until: float) -> tuple:
+    """(first, last) reading values in a window, or (None, None) — used for
+    the summary's CO2 start-vs-end trend."""
+    with connect() as conn:
+        first = conn.execute(
+            """SELECT value FROM readings WHERE metric = ? AND ts >= ? AND ts <= ?
+               ORDER BY ts ASC LIMIT 1""",
+            (metric, since, until),
+        ).fetchone()
+        last = conn.execute(
+            """SELECT value FROM readings WHERE metric = ? AND ts >= ? AND ts <= ?
+               ORDER BY ts DESC LIMIT 1""",
+            (metric, since, until),
+        ).fetchone()
+    return (first["value"] if first else None, last["value"] if last else None)
+
+
+# --------------------------------------------------------------- scene reads
+
+def list_scenes() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM scenes ORDER BY id").fetchall()
+    return [{"id": r["id"], "name": r["name"], "states": json.loads(r["states"])}
+            for r in rows]
+
+
+def get_scene(name: str) -> dict | None:
+    """Scene by name, case-insensitively ('sleeping' finds 'Sleeping')."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM scenes WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+    if row is None:
+        return None
+    return {"id": row["id"], "name": row["name"], "states": json.loads(row["states"])}
 
 
 # -------------------------------------------------------------- device reads

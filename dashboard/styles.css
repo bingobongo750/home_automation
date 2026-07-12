@@ -111,6 +111,49 @@ button:focus-visible, .widget:focus-visible { outline: 2px solid var(--copper); 
 .link-status.online .link-dot { background: var(--good); }
 .link-status.offline .link-dot { background: var(--critical); }
 
+/* house-mode (scene) switch and the board/planner view switch — same
+   segmented language as .detail-range / .color-mode-btn, silkscreen
+   MODE/VIEW tag on the left */
+.scene-switch, .view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.switch-group-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  padding: 0 6px 0 8px;
+}
+
+.scene-btn, .view-btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding: 3px 10px;
+  border-radius: 5px;
+}
+.scene-btn:hover, .view-btn:hover { color: var(--ink-2); }
+.scene-btn.active, .view-btn.active { color: var(--page); background: var(--copper); font-weight: 700; }
+.scene-btn[disabled] { opacity: 0.45; cursor: wait; }
+
+/* pending wake ("→ Day 07:00") or a short activation error */
+.scene-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--copper);
+  padding: 0 8px 0 6px;
+}
+.scene-note.err { color: var(--critical); }
+.scene-note:empty { display: none; }
+
 /* the live wire — raw serial protocol lines, as sent by the Arduino */
 .serial-ticker {
   display: flex;
@@ -448,6 +491,64 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 .stat-row dd .unit { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 4px; }
 
+/* small second line under a stat (min/max range, CO2 start→end, …) */
+.stat-sub {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.stat-sub.alert { color: var(--critical); }
+
+/* ------------------------------------------------- sleeping-scene dialog */
+
+.sleep-wake-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0 2px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.sleep-wake-row input[type="time"] {
+  padding: 5px 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color-scheme: dark; /* native picker chrome matches the board */
+}
+.sleep-wake-row input:focus-visible {
+  outline: 2px solid var(--copper);
+  outline-offset: 1px;
+}
+
+/* ------------------------------------------------- overnight summary card */
+
+.summary-card {
+  margin-bottom: 14px;
+  border-color: rgba(210, 148, 85, 0.35); /* quiet copper flag, not an alarm */
+}
+
+.summary-window {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.summary-dismiss {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  padding: 0 6px;
+  border-radius: 5px;
+}
+.summary-dismiss:hover { color: var(--ink); background: var(--surface-2); }
+
 /* ---------------------------------------------------------------- charts */
 
 .chart { position: relative; height: 130px; }
@@ -783,6 +884,847 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .activity-log li:last-child { border-bottom: none; }
 .activity-log .log-time { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .activity-log .log-empty { color: var(--muted); border-bottom: none; }
+
+/* --------------------------------------------------------------- planner
+   Calendar (day/week/month time grid) + slim to-do list. Same soldermask
+   cards and silkscreen labels as the board; the planner's own elements are
+   the category-tinted event blocks and the square-pad task checkbox. */
+
+/* predefined event categories — same validated hues as the chart series */
+:root {
+  --cat-home: #199e70;
+  --cat-work: #3987e5;
+  --cat-personal: #9085e9;
+  --cat-health: #c98500;
+  --cat-social: #c1763a;
+}
+
+.planner-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(280px, 1fr);
+  gap: 0 14px;
+  align-items: start;
+}
+@media (max-width: 960px) { .planner-grid { grid-template-columns: 1fr; } }
+
+/* the square + (add event / add task); rotates into × while a form is open */
+.add-btn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--copper);
+  font-family: var(--mono);
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 0.12s ease;
+}
+.add-btn:hover { background: var(--copper-dim); border-color: var(--copper); }
+.add-btn[aria-expanded="true"] { transform: rotate(45deg); }
+
+.ghost-btn {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 7px 14px;
+}
+.ghost-btn:hover { color: var(--ink); background: var(--surface-2); }
+.ghost-btn.ghost-danger { color: var(--critical); border-color: rgba(208, 59, 59, 0.4); }
+.ghost-btn.ghost-danger:hover { background: rgba(208, 59, 59, 0.12); color: var(--critical); }
+
+.done-toggle {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  padding: 4px 10px;
+  margin-top: 12px;
+}
+.done-toggle:hover { color: var(--ink-2); }
+.done-toggle[aria-pressed="true"] { color: var(--copper); border-color: var(--copper-dim); }
+
+/* ---- calendar toolbar ---- */
+
+.cal-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.cal-toolbar .detail-range { margin-bottom: 0; }
+
+.cal-nav {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--page);
+}
+.nav-btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding: 3px 9px;
+  border-radius: 5px;
+}
+.nav-btn:hover { color: var(--ink-2); background: var(--surface-2); }
+
+.cal-title {
+  margin: 0 auto 0 2px; /* pushes the + button to the right edge */
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+}
+
+.cal-hint { margin-top: 10px; }
+
+/* ---- day/week time grid (columns set inline by app.js) ---- */
+
+.cal-head-row, .cal-allday-row, .cal-scroll { display: grid; }
+
+.cal-day-head {
+  padding: 4px 2px 8px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-radius: 5px;
+}
+.cal-day-head:hover { color: var(--ink-2); background: var(--surface-2); }
+.cal-day-head .cal-day-num { color: var(--ink-2); margin-left: 4px; }
+.cal-day-head.today, .cal-day-head.today .cal-day-num { color: var(--copper); font-weight: 700; }
+
+/* all-day row: multi-day events are bars spanning their day columns, lane-
+   packed onto rows (grid-column / grid-row set inline by app.js) */
+.cal-allday-row {
+  border-top: 1px solid var(--hairline);
+  grid-auto-rows: minmax(20px, auto);
+  row-gap: 2px;
+  padding: 3px 0;
+  align-items: stretch;
+}
+.cal-gutter-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-align: right;
+  align-self: center;
+  padding: 0 6px 0 0;
+}
+.cal-allday-bar { margin: 0 2px; }
+
+.cal-scroll {
+  position: relative;
+  max-height: 560px;
+  overflow-y: auto;
+  border-top: 1px solid var(--hairline);
+}
+
+/* 24 h × 44 px/h = 1056 px — keep in sync with CAL_HOUR_PX in app.js */
+.cal-hours { position: relative; height: 1056px; }
+.cal-hour-label {
+  position: absolute;
+  right: 6px;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.cal-col {
+  position: relative;
+  height: 1056px;
+  border-left: 1px solid var(--hairline);
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--grid), var(--grid) 1px, transparent 1px, transparent 44px);
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.cal-col.today { background-color: rgba(210, 148, 85, 0.045); }
+
+/* event blocks + chips: tinted by category, copper when uncategorized */
+.cal-event, .cal-chip {
+  --evc: var(--copper);
+  --evbg: rgba(210, 148, 85, 0.15);
+}
+.cat-home     { --evc: var(--cat-home);     --evbg: rgba(25, 158, 112, 0.16); }
+.cat-work     { --evc: var(--cat-work);     --evbg: rgba(57, 135, 229, 0.16); }
+.cat-personal { --evc: var(--cat-personal); --evbg: rgba(144, 133, 233, 0.16); }
+.cat-health   { --evc: var(--cat-health);   --evbg: rgba(201, 133, 0, 0.16); }
+.cat-social   { --evc: var(--cat-social);   --evbg: rgba(193, 118, 58, 0.16); }
+
+.cal-event {
+  position: absolute;
+  /* flex column so the title sits at the block's top — a button's default
+     vertical centering would hide it below the fold on tall events */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
+  text-align: left;
+  padding: 2px 6px;
+  border-left: 3px solid var(--evc);
+  border-radius: 5px;
+  background: var(--evbg);
+}
+.cal-event:hover { filter: brightness(1.25); }
+.cal-event-title {
+  display: block;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cal-event-time {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* drag-to-create ghost block */
+.cal-ghost {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border: 1px dashed var(--copper);
+  border-radius: 5px;
+  background: var(--copper-dim);
+  pointer-events: none;
+}
+
+/* current-time wire across today's column */
+.cal-now {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 2px solid var(--copper);
+  pointer-events: none;
+}
+.cal-now::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: -4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--copper);
+}
+
+/* compact chips for the all-day row and month cells */
+.cal-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--evbg);
+  font-size: 11px;
+  color: var(--ink);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cal-chip:hover { filter: brightness(1.25); }
+.cal-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--evc); }
+.cal-chip-time { flex: none; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+/* ---- month grid ---- */
+
+.cal-month-head {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 5px;
+}
+
+.cal-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-top: 1px solid var(--hairline);
+  border-left: 1px solid var(--hairline);
+}
+
+.cal-cell {
+  min-height: 86px;
+  padding: 3px;
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  cursor: pointer;
+}
+.cal-cell:hover { background: var(--surface-2); }
+.cal-cell.drag-range { background: var(--copper-dim); }
+.cal-cell.other-month .cal-cell-day { color: var(--baseline); }
+
+.cal-cell-day {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.cal-cell-day:hover { background: var(--copper-dim); color: var(--copper); }
+.cal-cell.today .cal-cell-day { background: var(--copper); color: var(--page); font-weight: 700; }
+
+.cal-more {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  padding: 0 5px;
+}
+.cal-more:hover { color: var(--copper); }
+
+/* ---- event dialog + task quick-add inputs ---- */
+
+.event-title-input, .event-notes-input,
+.event-fields input, .event-fields select,
+.task-add-row input, .task-add-row select {
+  padding: 6px 9px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--page);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  color-scheme: dark; /* native picker chrome matches the board */
+}
+.event-title-input, .event-notes-input, .task-add-row input[type="text"] {
+  font-family: var(--sans);
+  font-size: 14px;
+  width: 100%;
+}
+.event-title-input:focus-visible, .event-notes-input:focus-visible,
+.event-fields input:focus-visible, .event-fields select:focus-visible,
+.task-add-row input:focus-visible, .task-add-row select:focus-visible {
+  outline: 2px solid var(--copper);
+  outline-offset: 1px;
+}
+
+#event-form { display: flex; flex-direction: column; gap: 12px; }
+
+.cat-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-btn {
+  --evc: var(--muted); /* the None chip's dot; categories override via .cat-* */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 3px 9px;
+}
+.cat-btn::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--evc);
+}
+.cat-btn:hover { color: var(--ink-2); }
+.cat-btn.active { color: var(--ink); border-color: var(--evc); background: var(--evbg, var(--surface-2)); }
+
+.event-allday-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.event-allday-row input { accent-color: var(--copper); width: 15px; height: 15px; }
+
+.event-fields { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.event-fields label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---- to-do card ---- */
+
+/* Two stacked to-do widgets (Life stuff / University) share the right column;
+   space them the way separate cards elsewhere are spaced. */
+.task-card + .task-card { margin-top: 14px; }
+
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+}
+/* silkscreen card heading; count sits just after it, + button pushed to the end */
+.task-card-title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink);
+}
+.task-count { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-right: auto; }
+
+.task-add-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.task-add-row[hidden] { display: none; } /* the flex display would win over [hidden] */
+.task-add-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+}
+.task-add-fields label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.save-btn-small { padding: 5px 12px; margin-left: auto; }
+
+/* priority: a silkscreen segmented control (Low/Med/High), not a native
+   select — matches the category picker's chip aesthetic */
+.prio-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.prio-seg { display: inline-flex; gap: 4px; }
+.prio-seg-btn {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 2px 8px;
+}
+.prio-seg-btn:hover { color: var(--ink-2); }
+.prio-seg-btn.active {
+  color: var(--copper);
+  border-color: var(--copper-dim);
+  background: var(--copper-dim);
+}
+
+.task-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.task-list .log-empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+/* silkscreen chips: due date, priority */
+.due-chip, .prio-chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 1px 6px;
+  margin-left: 8px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.due-chip.overdue {
+  color: var(--critical);
+  border-color: rgba(208, 59, 59, 0.4);
+  background: rgba(208, 59, 59, 0.12);
+}
+.prio-chip.high {
+  color: var(--copper);
+  border-color: var(--copper-dim);
+  background: var(--copper-dim);
+}
+
+/* row hover actions (edit / delete) */
+.row-actions { flex: none; display: flex; gap: 2px; opacity: 0.35; }
+.agenda-event:hover .row-actions, .task-row:hover .row-actions,
+.agenda-event:focus-within .row-actions, .task-row:focus-within .row-actions { opacity: 1; }
+
+.row-btn {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  padding: 3px 6px;
+  border-radius: 5px;
+}
+.row-btn:hover { color: var(--ink); background: var(--surface-2); }
+.row-btn.danger:hover { color: var(--critical); }
+
+/* to-do rows: the checkbox is a square pad — copper-filled when soldered */
+.task-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--hairline);
+}
+.task-row:last-child { border-bottom: none; }
+
+.task-check {
+  flex: none;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--baseline);
+  border-radius: 4px;
+  background: var(--page);
+  position: relative;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.task-check:hover { border-color: var(--copper); }
+.task-check[aria-checked="true"] { background: var(--copper); border-color: var(--copper); }
+.task-check[aria-checked="true"]::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--page);
+}
+.task-check[disabled] { opacity: 0.45; cursor: wait; }
+
+.task-main { flex: 1; min-width: 0; }
+.task-title { font-size: 13.5px; color: var(--ink); }
+.task-row.done .task-title { color: var(--muted); text-decoration: line-through; }
+
+/* planner half of the overnight summary card */
+.summary-planner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+@media (max-width: 560px) { .summary-planner { grid-template-columns: 1fr; } }
+.summary-planner[hidden] { display: none; } /* grid display would win over [hidden] */
+
+.summary-planner h4 {
+  margin: 0 0 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.summary-line { font-size: 12.5px; color: var(--ink-2); margin: 3px 0 0; }
+.summary-line .summary-time {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--copper);
+  margin-right: 7px;
+}
+.summary-line .summary-flag { color: var(--critical); }
+.summary-line.quiet { color: var(--muted); }
+
+.summary-scores { display: flex; gap: 18px; margin: 2px 0 4px; }
+.summary-score { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.summary-score b { font-size: 15px; }
+
+/* ---------------------------------------------------------------- health
+   Sleep/recovery tab. Structure mirrors the reference screens; styling stays
+   in the board's soldermask/silkscreen language — copper accent, mono labels,
+   the same card/track conventions as the widgets. */
+
+.zone-date { font-family: var(--mono); font-size: 11px; color: var(--muted); margin-left: 8px; }
+
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.score-readout { display: flex; align-items: baseline; gap: 4px; margin: 4px 0 10px; }
+.score-num { font-size: 46px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+.score-pct { font-size: 18px; color: var(--muted); }
+.score-status {
+  margin-left: auto;
+  align-self: flex-end;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.score-status.provisional { color: var(--muted); }
+
+.score-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.score-fill { display: block; height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+
+.score-drivers { margin: 12px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.driver-row { display: grid; grid-template-columns: 78px 1fr 46px; align-items: center; gap: 8px; }
+.driver-name { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.driver-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+.driver-bar.diverging::before {  /* centre baseline for z-score bars */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: var(--baseline);
+}
+.driver-fill { position: absolute; top: 0; height: 100%; border-radius: 2px; }
+.driver-val {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  text-align: right;
+}
+/* recovery drivers carry the actual reading + % vs baseline, not just the bar */
+.driver-row.has-reading { grid-template-columns: 78px 1fr 96px; }
+.driver-reading { display: block; font-size: 14px; font-weight: 600; color: var(--ink); }
+.driver-vs { display: block; font-size: 10px; }
+.driver-vs.good { color: var(--good); }
+.driver-vs.bad { color: var(--critical); }
+.score-flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.flag-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--critical);
+  border: 1px solid rgba(208, 59, 59, 0.4);
+  background: rgba(208, 59, 59, 0.12);
+  border-radius: 3px;
+  padding: 1px 6px;
+}
+.score-why { margin-top: 10px; }
+
+/* clickable health cards/tiles (sleep detail + vitals history dialogs) */
+.card.clickable { cursor: pointer; transition: border-color 0.12s ease; }
+.card.clickable:hover, .card.clickable:focus-visible { border-color: var(--copper); }
+.open-hint { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-right: 8px; }
+.card.clickable:hover .open-hint { color: var(--copper); }
+
+/* vitals tiles — the deviation from baseline is the headline */
+.vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+.vital-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  margin: -8px -10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.vital-tile:hover, .vital-tile:focus-visible { background: var(--surface-2); }
+.vital-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.vital-unit { font-size: 11px; font-weight: 400; color: var(--muted); margin-left: 3px; }
+.vital-delta-big { font-size: 24px; font-weight: 700; line-height: 1.1; }
+.vital-delta-big.good { color: var(--good); }
+.vital-delta-big.bad { color: var(--critical); }
+.vital-delta-big.neutral { color: var(--muted); }
+.vital-reading { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.vital-devbar {  /* diverging deviation bar, centred on the baseline */
+  position: relative;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  margin-top: 3px;
+}
+.vital-devbar::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--baseline);
+}
+.vital-devfill { position: absolute; top: 0; height: 100%; border-radius: 2px; }
+
+.sub-caption {
+  margin: 16px 0 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sub-caption .typ-key { color: var(--baseline); text-transform: none; letter-spacing: 0; margin-left: 6px; }
+
+/* stage split bars */
+.stage-bars { display: flex; flex-direction: column; gap: 8px; }
+.stage-row { display: grid; grid-template-columns: 52px 34px 1fr 58px; align-items: center; gap: 8px; }
+.stage-name { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
+.stage-pct { font-family: var(--mono); font-size: 11px; font-weight: 600; text-align: right; }
+.stage-track { position: relative; height: 9px; border-radius: 2px; background: var(--surface-2); }
+.stage-fill { display: block; height: 100%; border-radius: 2px; }
+.stage-typ {  /* typical-range tick */
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--ink-2);
+  opacity: 0.7;
+}
+.stage-dur { font-family: var(--mono); font-size: 11px; color: var(--muted); text-align: right; }
+
+.hypnogram { height: 130px; }
+.health-trend { height: 200px; }
+
+/* morning check-in (subjective rating) */
+.checkin-card { max-width: 520px; }
+.checkin-q { margin: 2px 0 10px; font-size: 14px; color: var(--ink-2); }
+.rating-row { display: flex; gap: 8px; }
+.rating-btn {
+  flex: 1;
+  padding: 10px 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+.rating-btn:hover { color: var(--ink); border-color: var(--copper-dim); }
+.rating-btn.chosen {
+  color: var(--page);
+  background: var(--copper);
+  border-color: var(--copper);
+  font-weight: 700;
+}
+
+/* trends header + legend */
+.trend-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.trend-legend { display: flex; gap: 12px; }
+.tl-key { font-family: var(--mono); font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+.tl-key::before { content: ""; width: 9px; height: 9px; border-radius: 2px; }
+.tl-rec::before { background: var(--good); }
+.tl-slp::before { background: var(--copper); }
+
+/* ------------------------------------------- sleep detail + vitals dialogs */
+
+.sd-summary { margin: 2px 0 4px; font-size: 13px; color: var(--ink-2); }
+.sd-section { border-top: 1px solid var(--hairline); padding-top: 12px; margin-top: 16px; }
+.sd-section .sub-caption { margin-top: 0; }
+.sd-hypnogram { height: 150px; }
+.hypnogram svg { cursor: crosshair; }
+.sd-legend {
+  display: flex;
+  gap: 14px;
+  margin: 4px 0 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.sd-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+.typ-note { margin: 8px 0 0; }
+.typ-note .typ-key { font-family: var(--mono); font-size: 10px; color: var(--baseline); }
+
+.sd-big { font-size: 24px; font-weight: 700; color: var(--ink); }
+.sd-big.muted { color: var(--ink-2); }
+.sd-sub { display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.sd-head-line { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); }
+.sd-chart-head { margin-top: 10px; }
+.sd-chart-head .detail-range { margin-bottom: 8px; }
+.sd-chart { height: 200px; }
+.sd-cons-chart { height: 280px; }
+
+.resto-head { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+.resto-ring { width: 72px; height: 72px; flex: none; }
+
+.sd-target-len { margin: 2px 0 12px; font-size: 34px; font-weight: 700; color: var(--good); }
+.sd-target-times { display: flex; gap: 48px; margin-bottom: 8px; }
+.sd-time-label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.sd-time { font-size: 24px; font-weight: 700; color: var(--ink); }
+.sd-time.copper { color: var(--copper); }
+.sd-cons-avg { display: flex; gap: 48px; margin-top: 10px; }
+
+.vitals-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--page);
+  margin: 4px 0 12px;
+}
+.vtab {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding: 3px 10px;
+  border-radius: 5px;
+}
+.vtab:hover { color: var(--ink-2); }
+.vtab.active { color: var(--page); background: var(--copper); font-weight: 700; }
+.vitals-readout { display: flex; gap: 48px; margin: 0 0 12px; }
+.vitals-chart { height: 240px; }
 
 /* ------------------------------------------------------------ responsive */
 

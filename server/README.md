@@ -38,6 +38,22 @@ auto-lighting job logs `WLED ZONE UNREACHABLE` and keeps trying. Sensor
 ingestion, plug polling, and the auto-lighting job run on independent
 threads and never block each other.
 
+### Seeding the Health tab before the Apple Health feed exists
+
+The Health tab (sleep/recovery) is fed by the Health Auto Export iOS app
+posting to `POST /api/health/ingest` — which needs Tailscale set up first. To
+inspect the tab before then, seed realistic artificial nights:
+
+```bash
+.venv/bin/python tools/seed_health.py            # ~30 nights (warms baselines)
+.venv/bin/python tools/seed_health.py --clear    # remove every seeded night
+```
+
+It writes to the same DB the server serves (`config.DB_PATH`) and is fully
+reversible: it records each night it creates and `--clear` deletes exactly
+those. ~30 nights (not 7) so the baselines warm up and scores stop reading as
+provisional. Temporary scaffolding — clear it once real data flows.
+
 ## Layout
 
 | File | Role |
@@ -50,7 +66,10 @@ threads and never block each other.
 | `app/poller.py` | plug polling thread → DB |
 | `app/wled.py` | WLED zone local JSON API client (+ mock) |
 | `app/lighting.py` | auto-lighting thread: lux → brightness for zones in `auto` mode |
-| `app/api.py` | REST endpoints |
+| `app/scenes.py` | house modes (Sleeping/Day/Away): activation, wake timer, overnight summary |
+| `app/planner.py` | calendar events (recurrence, categories, all-day/multi-day) + to-do tasks: own tables, own blueprint, morning snapshot |
+| `app/api.py` | REST endpoints (devices/sensors/scenes — planner endpoints live in `planner.py`) |
+| `tests/` | unittest suite (scenes, planner) — runs entirely against mock hardware |
 
 ## API
 
@@ -69,6 +88,15 @@ threads and never block each other.
 | `POST /api/devices/:id/state` | set a WLED zone's on/brightness/color/effect |
 | `POST /api/devices/:id/mode` | set a WLED zone's mode: `manual` or `auto` |
 | `GET/PUT /api/settings/thresholds` | alert thresholds (persisted in the DB) |
+| `GET /api/scenes` | house modes + per-device target states |
+| `POST /api/scenes/:name/activate` | activate a scene (optional `wake_time` for Sleeping) |
+| `GET /api/scenes/active` | current scene, activation time, pending wake |
+| `GET /api/scenes/last-summary` | latest Sleeping→Day overnight summary (sensor stats + planner snapshot) |
+| `GET /api/events?from=…&range=7d` | calendar events in a date window, recurrence expanded |
+| `POST/PUT/DELETE /api/events[/:id]` | create / partially update / delete an event |
+| `GET /api/tasks?list=…&done=…` | filterable to-do list |
+| `POST/PUT/DELETE /api/tasks[/:id]` | create / partially update / delete a task |
+| `POST /api/tasks/:id/complete` | one-tap complete (idempotent) |
 | `POST /api/arduino/command` | send a raw protocol line to the Arduino |
 
 Plugs are seeded from `MYSTROM_PLUG_IP` / `MYSTROM_PLUG2_IP` in `.env`; to add
@@ -80,3 +108,18 @@ brightness) is tuned via `LIGHTING_POLL_INTERVAL` / `LIGHTING_LUX_THRESHOLD`
 
 The DB path defaults to `./data/home.db` (gitignored); point `DB_PATH` at the
 1TB SSD for production, e.g. `/Volumes/SSD/home_automation/sensors.db`.
+
+## Tests
+
+Stdlib `unittest` only (no extra dependency); the suite forces
+`MOCK_HARDWARE=1` and a throwaway DB, so it runs with nothing plugged in:
+
+```bash
+cd server
+python3 -m unittest discover -s tests
+```
+
+Covers scene activation (device targets, locked-plug skip, auto-lighting
+suppression), the wake-time scheduler (arm/cancel/stale-fire/restart
+recovery), the overnight summary computation, and the planner (event CRUD,
+recurrence expansion, task filters/complete, the summary's planner section).

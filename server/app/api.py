@@ -6,7 +6,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from . import db, lighting, poller, serial_reader
+from . import db, lighting, poller, scenes, serial_reader
 from .mystrom import PlugError
 from .wled import WledError
 
@@ -233,19 +233,22 @@ def device_state(device_id: int):
     if zone is None:
         return jsonify({"error": "zone not configured"}), 404
 
+    def _num(v):  # bool is an int subclass — don't let true/false pass as 1/0
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
     body = request.get_json(silent=True) or {}
     brightness = body.get("brightness")
-    if brightness is not None and not (isinstance(brightness, (int, float)) and 0 <= brightness <= 255):
+    if brightness is not None and not (_num(brightness) and 0 <= brightness <= 255):
         return jsonify({"error": "brightness must be 0-255"}), 400
     color = body.get("color")
     if color is not None and (not isinstance(color, list) or len(color) != 3
-                               or not all(isinstance(c, (int, float)) and 0 <= c <= 255 for c in color)):
+                               or not all(_num(c) and 0 <= c <= 255 for c in color)):
         return jsonify({"error": "color must be [r, g, b] with each 0-255"}), 400
     on = body.get("on")
     if on is not None and not isinstance(on, bool):
         return jsonify({"error": "on must be a boolean"}), 400
     effect = body.get("effect")
-    if effect is not None and not isinstance(effect, int):
+    if effect is not None and (not isinstance(effect, int) or isinstance(effect, bool)):
         return jsonify({"error": "effect must be an integer"}), 400
 
     try:
@@ -275,6 +278,47 @@ def device_mode(device_id: int):
     db.set_device_mode(device_id, mode)
     log.info("Device %d mode set to %s", device_id, mode)
     return jsonify({"mode": mode})
+
+
+@api.get("/scenes")
+def scenes_list():
+    """House modes and their per-device target states (see app/scenes.py)."""
+    return jsonify(db.list_scenes())
+
+
+@api.post("/scenes/<name>/activate")
+def scene_activate(name: str):
+    """Activate a scene by name (case-insensitive). Body (optional):
+    {"wake_time": "HH:MM"} — only when activating Sleeping; schedules an
+    automatic switch back to Day at that local time (a scene change only —
+    NOT an alarm). Blank/absent means Sleeping holds until changed manually."""
+    body = request.get_json(silent=True) or {}
+    wake_time = body.get("wake_time")
+    if isinstance(wake_time, str):
+        wake_time = wake_time.strip() or None  # blank picker == no wake time
+    elif wake_time is not None:
+        return jsonify({"error": "wake_time must be an HH:MM string"}), 400
+    try:
+        result = scenes.activate(name, wake_time)
+    except scenes.SceneError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if result is None:
+        return jsonify({"error": f"no such scene {name!r}"}), 404
+    return jsonify(result)
+
+
+@api.get("/scenes/active")
+def scene_active():
+    """Current scene + activation time + pending wake time (if any).
+    Defaults to Day when no scene has ever been activated."""
+    return jsonify(scenes.active_info())
+
+
+@api.get("/scenes/last-summary")
+def scene_last_summary():
+    """Most recent Sleeping->Day overnight summary, or {"summary": null}
+    before the first one exists."""
+    return jsonify({"summary": db.get_setting("last_sleep_summary")})
 
 
 @api.post("/arduino/command")

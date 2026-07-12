@@ -13,6 +13,26 @@
   <div class="header-row">
     <h1 class="board-name">HUB-01 <span class="board-sub">home hub · one room, no cloud</span></h1>
     <div class="header-tools">
+      <!-- View switch: BOARD is the one-page device dashboard (all device
+           zones live there, never in a separate view); PLANNER (calendar +
+           to-do) and HEALTH (sleep/recovery, from Apple Health) are not
+           device lanes, so each gets its own layer instead of a board zone. -->
+      <div class="view-switch" role="group" aria-label="View">
+        <span class="switch-group-label">VIEW</span>
+        <button class="view-btn active" data-view="board" aria-pressed="true">Board</button>
+        <button class="view-btn" data-view="planner" aria-pressed="false">Planner</button>
+        <button class="view-btn" data-view="health" aria-pressed="false">Health</button>
+      </div>
+      <!-- House mode (scene) switch — persistent in the header since a scene
+           drives several device types at once. Sleeping opens a dialog with
+           the optional wake time; Day/Away activate directly. -->
+      <div class="scene-switch" id="scene-switch" role="group" aria-label="House mode">
+        <span class="switch-group-label">MODE</span>
+        <button class="scene-btn" data-scene="Sleeping" aria-pressed="false">Sleeping</button>
+        <button class="scene-btn" data-scene="Day" aria-pressed="false">Day</button>
+        <button class="scene-btn" data-scene="Away" aria-pressed="false">Away</button>
+        <span class="scene-note" id="scene-note"></span>
+      </div>
       <div class="link-status" id="link-status" title="Backend connection">
         <span class="link-dot" id="link-dot"></span><span id="link-label">connecting</span>
       </div>
@@ -33,10 +53,34 @@
 </header>
 
 <main>
-  <!-- Every .widget expands on click to show history + stats. -->
+<!-- BOARD view: the device dashboard. Every .widget expands on click to
+     show history + stats. -->
+<div class="view" id="view-board">
 
   <section class="zone">
     <h2 class="zone-label">Room conditions</h2>
+
+    <!-- Overnight summary: shown after a Sleeping -> Day transition (wake
+         timer or manual switch), filled by app.js from
+         /api/scenes/last-summary; the × dismisses it until the next night. -->
+    <article class="card summary-card" id="summary-card" hidden>
+      <header class="card-head">
+        <h3 class="card-label">Overnight summary</h3>
+        <span class="head-right">
+          <code class="wire-key">NIGHT</code>
+          <button class="summary-dismiss" id="summary-dismiss" aria-label="Dismiss summary">×</button>
+        </span>
+      </header>
+      <p class="summary-window" id="summary-window"></p>
+      <dl class="stat-row" id="summary-stats"></dl>
+      <!-- last night's recovery + sleep scores (empty on summaries stored
+           before the health module existed, or before any health data) -->
+      <div class="summary-health" id="summary-health" hidden></div>
+      <!-- planner half of the same summary: today's events + tasks needing
+           attention (empty on summaries stored before the planner existed) -->
+      <div class="summary-planner" id="summary-planner" hidden></div>
+    </article>
+
     <div class="widget-grid" id="room-grid">
 
       <article class="widget" data-widget="metric" data-metric="temp" tabindex="0" aria-expanded="false">
@@ -183,6 +227,179 @@
       </article>
     </div>
   </section>
+
+</div><!-- /view-board -->
+
+<!-- PLANNER view: local calendar (day/week/month time grid) + to-do list.
+     Its own backend module (app/planner.py) — nothing here touches the
+     device lanes. The calendar body is built entirely by app.js; adding an
+     event goes through the + button, a drag on the grid, or an empty month
+     cell — all opening #event-overlay below. -->
+<div class="view" id="view-planner" hidden>
+  <div class="planner-grid">
+
+    <section class="zone">
+      <h2 class="zone-label">Calendar</h2>
+      <article class="card cal-card">
+        <div class="cal-toolbar">
+          <div class="detail-range" id="cal-view" role="group" aria-label="Calendar view">
+            <button class="range-btn" data-calview="day">Day</button>
+            <button class="range-btn active" data-calview="week">Week</button>
+            <button class="range-btn" data-calview="month">Month</button>
+          </div>
+          <div class="cal-nav" role="group" aria-label="Calendar navigation">
+            <button class="nav-btn" id="cal-prev" aria-label="Previous">‹</button>
+            <button class="nav-btn nav-today" id="cal-today">Today</button>
+            <button class="nav-btn" id="cal-next" aria-label="Next">›</button>
+          </div>
+          <h3 class="cal-title" id="cal-title"></h3>
+          <button class="add-btn" id="event-add-btn" title="Add event" aria-label="Add event">+</button>
+        </div>
+        <div class="calendar" id="calendar"></div>
+        <p class="card-note cal-hint">Drag on the grid to block out a new event · click an event for details.</p>
+      </article>
+    </section>
+
+    <section class="zone" id="todo-zone">
+      <h2 class="zone-label">To-do</h2>
+      <!-- Two independent to-do widgets stacked in the right column, each its
+           own list, count, + button and add/edit row. app.js clones the
+           #task-card-tpl once per entry in TASK_LISTS and wires each up as a
+           self-contained TaskWidget; "university" is an exact match, "Life
+           stuff" is the catch-all so untagged tasks never vanish. -->
+    </section>
+
+    <template id="task-card-tpl">
+      <article class="card task-card">
+        <div class="task-head">
+          <h3 class="task-card-title"></h3>
+          <span class="task-count"></span>
+          <button class="add-btn task-add-btn" type="button" title="Add task" aria-expanded="false">+</button>
+        </div>
+        <!-- hidden until + is clicked; doubles as the edit row (✎ on a task) -->
+        <form class="task-add-row task-form" autocomplete="off" hidden>
+          <input type="text" class="task-title-input" placeholder="Task title" required maxlength="200">
+          <div class="task-add-fields">
+            <label>Due <input type="date" class="task-due"></label>
+            <span class="prio-field">Priority
+              <span class="prio-seg" role="radiogroup" aria-label="Priority">
+                <button type="button" class="prio-seg-btn" data-prio="low" role="radio" aria-checked="false">Low</button>
+                <button type="button" class="prio-seg-btn" data-prio="medium" role="radio" aria-checked="true">Med</button>
+                <button type="button" class="prio-seg-btn" data-prio="high" role="radio" aria-checked="false">High</button>
+              </span>
+            </span>
+            <button type="submit" class="save-btn save-btn-small task-submit">Add</button>
+          </div>
+          <span class="save-note task-note" role="status"></span>
+        </form>
+        <ol class="task-list"><li class="log-empty">Loading…</li></ol>
+        <button class="done-toggle" type="button" aria-pressed="false" hidden>Show done</button>
+      </article>
+    </template>
+
+  </div>
+</div><!-- /view-planner -->
+
+<!-- HEALTH view: sleep/recovery scored from Apple Health data (pushed to
+     /api/health/ingest by the Health Auto Export app). Structure follows the
+     reference screens; the look is this hub's own soldermask language. The
+     board holds the two score cards, the check-in, the vitals deltas and the
+     trends; the deeper analysis lives in two dialogs — click the Sleep card
+     for stages/restorative/target/debt/consistency (#sleepd-overlay), click a
+     vitals tile for that vital's history (#vitals-overlay). All filled by
+     app.js from /api/health/night + /api/health/history. -->
+<div class="view" id="view-health" hidden>
+
+  <section class="zone" id="health-empty" hidden>
+    <article class="card">
+      <p class="log-empty" id="health-empty-msg">No health data yet — point Health
+        Auto Export at <code class="wire-key">POST /api/health/ingest</code>.</p>
+    </article>
+  </section>
+
+  <div id="health-body" hidden>
+    <!-- Last night: the two scores, each with its contributor breakdown -->
+    <section class="zone">
+      <h2 class="zone-label">Last night <span class="zone-date" id="health-night"></span></h2>
+      <div class="score-grid">
+        <article class="card score-card">
+          <header class="card-head">
+            <h3 class="card-label">Recovery</h3>
+            <span class="head-right"><code class="wire-key">REC</code></span>
+          </header>
+          <p class="score-readout">
+            <span class="score-num" id="recovery-num">—</span><span class="score-pct">%</span>
+            <span class="score-status" id="recovery-status"></span>
+          </p>
+          <div class="score-track"><span class="score-fill" id="recovery-fill"></span></div>
+          <dl class="score-drivers" id="recovery-drivers"></dl>
+          <p class="card-note score-why" id="recovery-why"></p>
+        </article>
+        <!-- clicking the sleep card opens the full sleep-detail dialog
+             (hypnogram, restorative, target, debt, consistency) -->
+        <article class="card score-card clickable" id="sleep-card" role="button" tabindex="0"
+                 aria-haspopup="dialog" aria-label="Sleep — open detailed analysis">
+          <header class="card-head">
+            <h3 class="card-label">Sleep</h3>
+            <span class="head-right"><span class="open-hint">details ›</span><code class="wire-key">SLP</code></span>
+          </header>
+          <p class="score-readout">
+            <span class="score-num" id="sleep-num">—</span><span class="score-pct">%</span>
+            <span class="score-status" id="sleep-status"></span>
+          </p>
+          <div class="score-track"><span class="score-fill" id="sleep-fill"></span></div>
+          <dl class="score-drivers" id="sleep-drivers"></dl>
+          <p class="card-note score-why" id="sleep-why"></p>
+        </article>
+      </div>
+      <!-- subjective 1-5 morning feel + how well the scores track it (pass 8) -->
+      <article class="card checkin-card">
+        <header class="card-head">
+          <h3 class="card-label">Morning check-in</h3>
+          <span class="head-right"><code class="wire-key">FEEL</code></span>
+        </header>
+        <p class="checkin-q">How recovered do you feel this morning?</p>
+        <div class="rating-row" id="rating-row" role="group" aria-label="Morning feel, 1 (wrecked) to 5 (great)">
+          <button class="rating-btn" data-rating="1" title="Wrecked">1</button>
+          <button class="rating-btn" data-rating="2">2</button>
+          <button class="rating-btn" data-rating="3">3</button>
+          <button class="rating-btn" data-rating="4">4</button>
+          <button class="rating-btn" data-rating="5" title="Great">5</button>
+        </div>
+        <p class="card-note" id="checkin-corr"></p>
+      </article>
+    </section>
+
+    <!-- Vitals: last night's deviation from the rolling baseline (the delta is
+         the headline; the absolute value rides below). Each tile opens the
+         vitals-history dialog on its own metric. -->
+    <section class="zone">
+      <h2 class="zone-label">Vitals vs baseline</h2>
+      <article class="card">
+        <div class="vitals-grid" id="vitals-grid"></div>
+      </article>
+    </section>
+
+    <!-- Score trends -->
+    <section class="zone">
+      <h2 class="zone-label">Trends</h2>
+      <article class="card">
+        <div class="trend-head">
+          <div class="detail-range" id="health-range" role="group" aria-label="Trend range">
+            <button class="range-btn" data-hrange="7d">7d</button>
+            <button class="range-btn active" data-hrange="30d">30d</button>
+            <button class="range-btn" data-hrange="60d">60d</button>
+          </div>
+          <div class="trend-legend">
+            <span class="tl-key tl-rec">Recovery</span>
+            <span class="tl-key tl-slp">Sleep</span>
+          </div>
+        </div>
+        <div class="health-trend chart" id="health-trend"></div>
+      </article>
+    </section>
+  </div>
+</div><!-- /view-health -->
 </main>
 
 <!-- Widget detail dialog: opens on top of the board so nothing reflows.
@@ -272,6 +489,208 @@
         <span class="save-note" id="unlock-note" role="status"></span>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Sleeping-scene dialog: activation plus the optional wake time. The
+     scheduled switch only changes the scene back to Day — it is NOT an alarm. -->
+<div class="detail-overlay" id="sleep-overlay" hidden>
+  <div class="detail-backdrop" id="sleep-backdrop"></div>
+  <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="sleep-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="sleep-title">Sleeping mode</h3>
+        <code class="wire-key">MODE</code>
+      </div>
+      <button class="detail-close" id="sleep-close" aria-label="Close">×</button>
+    </header>
+    <p class="settings-hint">Every lighting zone off, every unlocked plug off. Auto
+       lighting pauses until the house returns to Day.</p>
+    <form id="sleep-form">
+      <label class="sleep-wake-row">
+        <span>Auto-switch to Day at</span>
+        <input type="time" id="wake-time-input">
+      </label>
+      <p class="settings-hint">Optional — leave blank to stay in Sleeping until you change
+         it yourself. This only switches the scene at that time; it is not an alarm and
+         won't sound or notify.</p>
+      <div class="settings-actions">
+        <button type="submit" class="save-btn">Activate Sleeping</button>
+        <span class="save-note" id="sleep-note" role="status"></span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Event dialog: opened by the calendar's + button, a drag on the time
+     grid, an empty month cell, or clicking an existing event (which prefills
+     it for editing and shows Delete). Editing a recurring event always
+     edits the whole series — occurrences are derived, never stored. -->
+<div class="detail-overlay" id="event-overlay" hidden>
+  <div class="detail-backdrop" id="event-backdrop"></div>
+  <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="event-dialog-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="event-dialog-title">New event</h3>
+        <code class="wire-key">CAL</code>
+      </div>
+      <button class="detail-close" id="event-close" aria-label="Close">×</button>
+    </header>
+    <form id="event-form" autocomplete="off">
+      <input type="text" id="event-title" class="event-title-input"
+             placeholder="Title" required maxlength="200">
+      <div class="cat-picker" id="event-category" role="group" aria-label="Category">
+        <button type="button" class="cat-btn active" data-cat="">None</button>
+        <button type="button" class="cat-btn cat-home" data-cat="home">Home</button>
+        <button type="button" class="cat-btn cat-work" data-cat="work">Work</button>
+        <button type="button" class="cat-btn cat-personal" data-cat="personal">Personal</button>
+        <button type="button" class="cat-btn cat-health" data-cat="health">Health</button>
+        <button type="button" class="cat-btn cat-social" data-cat="social">Social</button>
+      </div>
+      <label class="event-allday-row">
+        <input type="checkbox" id="event-allday"> All day
+      </label>
+      <div class="event-fields">
+        <label>Starts <input type="datetime-local" id="event-start" required></label>
+        <label id="event-end-label">Ends <input type="datetime-local" id="event-end"></label>
+        <label>Repeats
+          <select id="event-recurrence">
+            <option value="none" selected>Never</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+        </label>
+      </div>
+      <input type="text" id="event-notes" class="event-notes-input"
+             placeholder="Notes (optional)" maxlength="500">
+      <div class="settings-actions">
+        <button type="submit" class="save-btn" id="event-submit">Add event</button>
+        <button type="button" class="ghost-btn ghost-danger" id="event-delete" hidden>Delete</button>
+        <span class="save-note" id="event-note" role="status"></span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Sleep detail dialog: opened by the Health view's Sleep card. Follows the
+     reference screens' order — stage trace with durations, restorative sleep,
+     tonight's target, sleep debt, consistency (SRI) — filled by app.js from
+     the cached night readout + /api/health/history?range=60d. -->
+<div class="detail-overlay" id="sleepd-overlay" hidden>
+  <div class="detail-backdrop" id="sleepd-backdrop"></div>
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="sleepd-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="sleepd-title">Sleep</h3>
+        <code class="wire-key">SLP</code>
+      </div>
+      <button class="detail-close" id="sleepd-close" aria-label="Close">×</button>
+    </header>
+    <p class="sd-summary" id="sd-summary"></p>
+
+    <section class="sd-section">
+      <h4 class="sub-caption">Stages</h4>
+      <div class="hypnogram sd-hypnogram" id="sd-hypnogram"></div>
+      <div class="sd-legend" id="sd-legend"></div>
+      <div class="stage-bars" id="sd-stages"></div>
+      <p class="typ-note"><span class="typ-key">▏ typical range</span></p>
+    </section>
+
+    <section class="sd-section">
+      <h4 class="sub-caption">Restorative sleep</h4>
+      <div class="resto-head">
+        <div class="resto-ring" id="sd-resto-ring"></div>
+        <div class="resto-readout">
+          <span class="sd-big" id="sd-resto-dur">—</span>
+          <span class="sd-sub" id="sd-resto-avg"></span>
+        </div>
+      </div>
+      <p class="card-note" id="sd-resto-note"></p>
+      <div class="sd-chart-head">
+        <div class="detail-range" role="group" aria-label="Restorative range" id="sd-resto-range">
+          <button class="range-btn active" data-range="7d">7d</button>
+          <button class="range-btn" data-range="30d">30d</button>
+          <button class="range-btn" data-range="60d">60d</button>
+        </div>
+      </div>
+      <div class="sd-chart" id="sd-resto-chart"></div>
+    </section>
+
+    <section class="sd-section">
+      <h4 class="sub-caption">Tonight's target sleep</h4>
+      <p class="sd-target-len" id="sd-target-len">—</p>
+      <div class="sd-target-times">
+        <div><span class="sd-time-label">Target bed time</span>
+             <span class="sd-time" id="sd-target-bed">—</span></div>
+        <div><span class="sd-time-label">Target wake time</span>
+             <span class="sd-time copper" id="sd-target-wake">—</span></div>
+      </div>
+      <p class="card-note" id="sd-target-note"></p>
+    </section>
+
+    <section class="sd-section">
+      <h4 class="sub-caption">Sleep debt</h4>
+      <p class="sd-head-line">14-day total: <span class="sd-big" id="sd-debt-total">—</span></p>
+      <div class="sd-chart-head">
+        <div class="detail-range" role="group" aria-label="Debt range" id="sd-debt-range">
+          <button class="range-btn" data-range="7d">7d</button>
+          <button class="range-btn active" data-range="30d">30d</button>
+          <button class="range-btn" data-range="60d">60d</button>
+        </div>
+      </div>
+      <div class="sd-chart" id="sd-debt-chart"></div>
+      <p class="card-note" id="sd-debt-note"></p>
+    </section>
+
+    <section class="sd-section">
+      <h4 class="sub-caption">Sleep time consistency</h4>
+      <p class="sd-head-line">Regularity: <span class="sd-big" id="sd-sri">—</span></p>
+      <div class="sd-chart-head">
+        <div class="detail-range" role="group" aria-label="Consistency range" id="sd-cons-range">
+          <button class="range-btn active" data-range="7d">7d</button>
+          <button class="range-btn" data-range="30d">30d</button>
+          <button class="range-btn" data-range="60d">60d</button>
+        </div>
+      </div>
+      <div class="sd-chart sd-cons-chart" id="sd-cons-chart"></div>
+      <div class="sd-cons-avg" id="sd-cons-avg"></div>
+    </section>
+  </div>
+</div>
+
+<!-- Vitals history dialog: opened from a vitals tile. One metric at a time
+     (tabs), nightly values over 7/30/60 days against the rolling-baseline
+     band. -->
+<div class="detail-overlay" id="vitals-overlay" hidden>
+  <div class="detail-backdrop" id="vitals-backdrop"></div>
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="vitals-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="vitals-title">Vitals history</h3>
+        <code class="wire-key">VIT</code>
+      </div>
+      <button class="detail-close" id="vitals-close" aria-label="Close">×</button>
+    </header>
+    <div class="vitals-tabs" id="vitals-tabs" role="group" aria-label="Vital metric">
+      <button class="vtab active" data-vmetric="hrv">HRV</button>
+      <button class="vtab" data-vmetric="rhr">Resting HR</button>
+      <button class="vtab" data-vmetric="resp_rate">Respiration</button>
+      <button class="vtab" data-vmetric="spo2">SpO₂</button>
+      <button class="vtab" data-vmetric="wrist_temp">Wrist temp</button>
+    </div>
+    <div class="vitals-readout">
+      <div><span class="sd-time-label">Most recent</span>
+           <span class="sd-big" id="vitals-recent">—</span></div>
+      <div><span class="sd-time-label">Baseline</span>
+           <span class="sd-big muted" id="vitals-baseline">—</span></div>
+    </div>
+    <div class="detail-range" role="group" aria-label="History range" id="vitals-range">
+      <button class="range-btn" data-range="7d">7d</button>
+      <button class="range-btn active" data-range="30d">30d</button>
+      <button class="range-btn" data-range="60d">60d</button>
+    </div>
+    <div class="sd-chart vitals-chart" id="vitals-chart"></div>
+    <p class="card-note">Shaded band: your rolling baseline mean ± SD on the latest night.</p>
   </div>
 </div>
 
