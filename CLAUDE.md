@@ -7,7 +7,7 @@ relitigate them without a clear reason.
 ## Project summary
 
 A DIY smart home hub. An old MacBook (8GB RAM) runs 24/7 as the central server, sensor
-database, and web dashboard. An Arduino Uno handles all wired, time-sensitive I/O over a
+database, and web dashboard. An Arduino Due handles all wired, time-sensitive I/O over a
 single USB serial connection. WiFi devices — currently two myStrom smart plugs and two
 WLED ambient-lighting zones — are controlled directly by the host over the network — no
 cloud, no third-party hub, no Home Assistant.
@@ -19,7 +19,7 @@ call REST APIs.
 
 ## Two device lanes — do not blur these
 
-1. **WIRED lane** (Arduino Uno ↔ Mac via USB serial)
+1. **WIRED lane** (Arduino Due ↔ Mac via USB serial)
    All sensors and any relay/MOSFET/LED-strip actuators wire into the Arduino via
    breadboard — never directly into the Mac. Time-sensitive or per-pixel timing logic
    (e.g. NeoPixel animation) lives entirely on the Arduino. The host only ever sends
@@ -44,25 +44,29 @@ call REST APIs.
 
 ## Hardware inventory (wired / Arduino side)
 
-I2C bus, shared on pins A4/A5, no address conflicts:
+I2C bus, shared on the Due's SDA/SCL pins (20/21), no address conflicts:
 
 | Sensor | Purpose | Interface | Address |
 |---|---|---|---|
 | BME280 | Temperature + humidity | I2C | 0x76 or 0x77 |
 | BH1750 | Ambient light level | I2C | 0x23 |
-| SCD30 / SCD40 | CO2 | I2C | 0x61 |
+| SCD40 (SCD30 also supported) | CO2 | I2C | 0x62 (SCD30: 0x61) |
 | HC-SR501 (PIR) | Motion | Digital pin | — |
 
-Use Adafruit-style breakout boards (onboard 3.3V regulation / level shifting) — never bare
-sensor chips — since the Uno's logic is 5V.
+Use Adafruit-style breakout boards (onboard regulation) — never bare sensor chips. The
+Due is **3.3V logic and its pins are NOT 5V tolerant**: power the I2C breakouts from the
+3.3V pin so the bus stays at 3.3V. Exception: the HC-SR501 is fed from the 5V pin (its
+regulator needs it) but its output signal is natively 3.3V, so it's safe on a Due input.
 
 Planned/future wired additions (design for extensibility, don't build yet):
 - WS2812B/NeoPixel strip wired directly to the Arduino (CO2 traffic-light indicator,
   motion accent lighting, sunrise alarm) via `MODE:`/`COLOR:` serial commands — distinct
   from the WLED ambient-lighting zones, which are wireless ESP32 nodes on the WIRELESS
-  lane above, not this strip
-- Opto-isolated relay module for mains ON/OFF switching
-- Logic-level MOSFET (e.g. IRLZ44N) for low-voltage LED dimming
+  lane above, not this strip (3.3V data from the Due is usually fine on a short run;
+  add a 74AHCT125 buffer if it glitches)
+- Opto-isolated relay module for mains ON/OFF switching (must trigger at 3.3V)
+- Logic-level MOSFET for low-voltage LED dimming (needs a true 3.3V-gate part — the
+  IRLZ44N originally planned is marginal at a 3.3V gate)
 - OLED/e-ink display, RFID reader, water leak sensor, soil moisture sensor
 
 ## Serial protocol (host ⇄ Arduino)
@@ -88,9 +92,10 @@ CO2:612
 MOTION:1
 ```
 
-Prefer simple `KEY:VALUE` framing over JSON on the wire — the Uno has very little RAM and
-JSON parsing libraries add overhead. The host is responsible for structuring/labeling data
-before it hits the database or API layer.
+Prefer simple `KEY:VALUE` framing over JSON on the wire — it keeps the firmware trivial
+and the seam debuggable by eye, and lets a small-RAM AVR node (the original Uno target)
+join later without a protocol change. The host is responsible for structuring/labeling
+data before it hits the database or API layer.
 
 ## WiFi plug integration (myStrom)
 

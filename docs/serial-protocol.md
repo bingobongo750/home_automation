@@ -39,7 +39,8 @@ unknown commands with `# ERR ...`. Commands can be sent from the host via
 
 ## Design rules
 
-- `KEY:VALUE` framing, never JSON — the Uno has 2 KB of RAM.
+- `KEY:VALUE` framing, never JSON — trivial firmware, debuggable by eye, and a
+  small-RAM AVR node (the original Uno target) could join later unchanged.
 - Never send per-pixel / per-frame data over serial; NeoPixel animation logic
   belongs on the Arduino, selected by short `MODE:` commands.
 - Keep values short and numeric so host parsing stays a `partition(":")`.

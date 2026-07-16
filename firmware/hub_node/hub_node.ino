@@ -1,8 +1,14 @@
 /*
- * hub_node.ino — Smart Home Hub, wired sensor node (Arduino Uno)
+ * hub_node.ino — Smart Home Hub, wired sensor node (Arduino Due)
  *
- * Reads BME280 (temp/hum), BH1750 (lux), SCD30 (CO2) over I2C plus an
- * HC-SR501 PIR on a digital pin, and publishes readings over USB serial.
+ * Reads BME280 (temp/hum), BH1750 (lux), SCD40 (CO2) over I2C plus an
+ * HC-SR501 PIR on a digital pin, and publishes readings over USB serial
+ * (the Due's PROGRAMMING port — the one nearer the DC jack).
+ *
+ * VOLTAGE: the Due is 3.3V logic and its pins are NOT 5V tolerant. Power
+ * every I2C breakout from the 3.3V pin so the bus is pulled up to 3.3V.
+ * The HC-SR501 is the one exception: feed it from the 5V pin (its regulator
+ * needs it) — its output signal is natively 3.3V and safe on PIN_PIR.
  *
  * SERIAL PROTOCOL (keep in sync with /docs/serial-protocol.md and the
  * host-side parser in /server/app/serial_reader.py):
@@ -31,14 +37,14 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include <BH1750.h>
-#include <SparkFun_SCD30_Arduino_Library.h>
+#include <SparkFun_SCD4x_Arduino_Library.h>
 
 // ---- Pin assignments (see firmware/README.md for wiring) ----
 const uint8_t PIN_PIR      = 2;   // HC-SR501 output
 const uint8_t PIN_RELAY1   = 7;   // future: opto-isolated relay module IN1
 const uint8_t PIN_DIM1     = 9;   // future: IRLZ44N gate (PWM-capable pin)
 const uint8_t PIN_NEOPIXEL = 6;   // future: WS2812B data line
-// I2C is fixed on the Uno: SDA = A4, SCL = A5.
+// I2C on the Due: SDA = pin 20, SCL = pin 21 (labeled on the board).
 
 // ---- Timing ----
 const unsigned long REPORT_INTERVAL_MS = 5000;  // sensor report cadence
@@ -47,7 +53,7 @@ unsigned long lastReportMs = 0;
 // ---- Sensors ----
 Adafruit_BME280 bme;
 BH1750 lightMeter;
-SCD30 co2Sensor;
+SCD4x co2Sensor;
 
 bool bmeOk = false;
 bool bhOk = false;
@@ -72,13 +78,13 @@ void setup() {
   // Try both common BME280 addresses (0x76 on most clone breakouts, 0x77 Adafruit)
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   bhOk = lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE);
-  scdOk = co2Sensor.begin();
+  scdOk = co2Sensor.begin();  // starts periodic measurement by default
 
   // '#' lines are logs; the host parser skips them.
   Serial.println(F("# hub_node boot"));
   Serial.print(F("# BME280: "));  Serial.println(bmeOk ? F("ok") : F("NOT FOUND"));
   Serial.print(F("# BH1750: "));  Serial.println(bhOk ? F("ok") : F("NOT FOUND"));
-  Serial.print(F("# SCD30:  "));  Serial.println(scdOk ? F("ok") : F("NOT FOUND"));
+  Serial.print(F("# SCD40:  "));  Serial.println(scdOk ? F("ok") : F("NOT FOUND"));
 }
 
 void loop() {
@@ -118,8 +124,9 @@ void reportSensors() {
     }
   }
 
-  // SCD30 self-paces (~2s measurement interval); only report fresh data.
-  if (scdOk && co2Sensor.dataAvailable()) {
+  // SCD40 self-paces (~5s measurement interval); readMeasurement() returns
+  // true only when a fresh sample was fetched, so stale ticks are skipped.
+  if (scdOk && co2Sensor.readMeasurement()) {
     Serial.print(F("CO2:"));
     Serial.println(co2Sensor.getCO2());
   }

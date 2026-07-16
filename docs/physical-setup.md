@@ -39,17 +39,25 @@ hardware is at hand:
    `POST /api/devices/:id/mode {"mode": "auto"}`) once the BH1750 is
    installed and reporting `lux`.
 
-## Breadboard wiring (Arduino Uno)
+## Breadboard wiring (Arduino Due)
 
-Pinout lives in `/firmware/README.md`. Summary: BME280 + BH1750 + SCD30 share
-I2C on A4 (SDA) / A5 (SCL); PIR output on D2; future relay D7, MOSFET gate D9,
-NeoPixel data D6. Use Adafruit-style breakouts only (onboard 3.3V
-regulation/level shifting) — the Uno is 5V logic.
+Pinout lives in `/firmware/README.md`. Summary: BME280 + BH1750 + SCD40 share
+I2C on SDA (20) / SCL (21); PIR output on D2; future relay D7, MOSFET gate D9,
+NeoPixel data D6.
 
-- HC-SR501: let it warm up ~60 s after power-on before trusting `MOTION`
-  readings; tune its sensitivity/hold-time trimpots in place.
-- SCD30: needs a couple of minutes to settle; consider its calibration
-  (fresh outdoor air ≈ 420 ppm) after installation.
+**The Due is 3.3V logic and its pins are NOT 5V tolerant.** Power the I2C
+breakouts (Adafruit-style boards with onboard regulation only, never bare
+chips) from the **3.3V pin** so the bus is pulled up to 3.3V — never from 5V.
+
+- HC-SR501: the exception — feed it from the **5V pin** (its onboard regulator
+  needs it); its output signal is natively 3.3V and safe on D2. Let it warm up
+  ~60 s after power-on before trusting `MOTION` readings; tune its
+  sensitivity/hold-time trimpots in place.
+- SCD40: needs a minute or two to settle; automatic self-calibration assumes
+  the room sees fresh air (≈ 420 ppm) regularly — force a recalibration
+  outdoors if readings look off after installation.
+- Use the Due's **programming port** (micro-USB nearer the DC jack) — that's
+  the `Serial` the firmware and host read.
 
 ## Host bring-up
 
