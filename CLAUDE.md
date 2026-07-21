@@ -6,41 +6,43 @@ relitigate them without a clear reason.
 
 ## Project summary
 
-A DIY smart home hub. An old MacBook (8GB RAM) runs 24/7 as the central server, sensor
-database, and web dashboard. An Arduino Due handles all wired, time-sensitive I/O over a
-single USB serial connection. WiFi devices — currently two myStrom smart plugs and two
-WLED ambient-lighting zones — are controlled directly by the host over the network — no
-cloud, no third-party hub, no Home Assistant.
+A DIY smart home hub. A Raspberry Pi 4 (4GB RAM) runs 24/7 as the central server, sensor
+database, and web dashboard, booting from a 1TB USB-C SSD. An old MacBook (8GB RAM) that
+previously held this role stays around as a fallback/dev machine — it can run the full
+stack under `MOCK_HARDWARE=1` for development, or take over host duty if the Pi is down,
+but the Pi is the source of truth whenever it's up. An Arduino Due handles all wired,
+time-sensitive I/O over a single USB serial connection to the host. WiFi devices —
+currently two myStrom smart plugs and two Shelly smart bulbs (ambient-lighting zones) —
+are controlled directly by the host over the network — no cloud, no third-party hub, no
+Home Assistant.
 
-**Hard constraint:** the host is an 8GB RAM MacBook. Never introduce video transcoding,
-AI/camera vision, Docker-heavy stacks, or anything with a large idle memory footprint.
-Everything on the host should be lightweight I/O: read serial, write SQLite, serve HTTP,
-call REST APIs.
+**Hard constraint:** the host is a 4GB RAM Raspberry Pi 4. Never introduce video
+transcoding, AI/camera vision, Docker-heavy stacks, or anything with a large idle memory
+footprint. Everything on the host should be lightweight I/O: read serial, write SQLite,
+serve HTTP, call REST APIs.
 
 ## Two device lanes — do not blur these
 
-1. **WIRED lane** (Arduino Due ↔ Mac via USB serial)
-   All sensors and any relay/MOSFET/LED-strip actuators wire into the Arduino via
-   breadboard — never directly into the Mac. Time-sensitive or per-pixel timing logic
-   (e.g. NeoPixel animation) lives entirely on the Arduino. The host only ever sends
-   short, high-level text commands over serial and reads short structured lines back.
-   Never send per-pixel or per-frame data over serial.
+1. **WIRED lane** (Arduino Due ↔ host via USB serial)
+   All sensors and any future relay/MOSFET actuators wire into the Arduino via
+   breadboard — never directly into the host. Time-sensitive timing logic lives
+   entirely on the Arduino. The host only ever sends short, high-level text commands
+   over serial and reads short structured lines back.
 
-2. **WIRELESS lane** (Mac ↔ WiFi devices directly, bypassing the Arduino entirely)
+2. **WIRELESS lane** (host ↔ WiFi devices directly, bypassing the Arduino entirely)
    The host's server calls each WiFi device's local REST API directly over the LAN.
    Currently two device types:
    - Two **myStrom WiFi Switch** plugs (Swiss Type J, local REST API, power monitoring
      2–3680W) — "Plug 1" (Living Room) is physically installed, "Plug 2" is seeded in
      the `devices` table as a placeholder IP until it's physically installed.
-   - Two **WLED ambient-lighting zones** ("Cupboard", "Table") — each a separate ESP32
-     running stock WLED firmware (local JSON API, no cloud), driving an addressable LED
-     strip near that zone. Both are seeded as placeholder IPs; no ESP32 is flashed yet.
+   - Two **Shelly Multicolor Bulb E27 Gen3** smart bulbs ("Cupboard", "Table") —
+     self-contained WiFi RGBW bulbs (local JSON-RPC API over HTTP, no cloud required)
+     that screw into an ordinary E27 fixture; the fixture only ever supplies mains
+     power, all control electronics live in the bulb itself. Both are seeded as
+     placeholder IPs; neither is physically installed yet.
    No cloud account or app is required for runtime control, only initial WiFi
    provisioning. Devices are modeled generically (see below) so further WiFi plugs or
-   lighting zones can register without rewriting existing device logic. **Do not confuse
-   this with the wired NeoPixel strip in the hardware inventory below** — that would be
-   a strip wired directly into the Arduino, driven over serial; WLED zones are wireless
-   ESP32 nodes and never touch the Arduino or the serial protocol.
+   lighting zones can register without rewriting existing device logic.
 
 ## Hardware inventory (wired / Arduino side)
 
@@ -59,11 +61,6 @@ Due is **3.3V logic and its pins are NOT 5V tolerant**: power the I2C breakouts 
 regulator needs it) but its output signal is natively 3.3V, so it's safe on a Due input.
 
 Planned/future wired additions (design for extensibility, don't build yet):
-- WS2812B/NeoPixel strip wired directly to the Arduino (CO2 traffic-light indicator,
-  motion accent lighting, sunrise alarm) via `MODE:`/`COLOR:` serial commands — distinct
-  from the WLED ambient-lighting zones, which are wireless ESP32 nodes on the WIRELESS
-  lane above, not this strip (3.3V data from the Due is usually fine on a short run;
-  add a 74AHCT125 buffer if it glitches)
 - Opto-isolated relay module for mains ON/OFF switching (must trigger at 3.3V)
 - Logic-level MOSFET for low-voltage LED dimming (needs a true 3.3V-gate part — the
   IRLZ44N originally planned is marginal at a 3.3V gate)
@@ -79,8 +76,6 @@ on the Arduino side. Keep this protocol stable — both firmware and host code d
 RELAY1:ON
 RELAY1:OFF
 DIM1:180                # PWM value 0-255
-MODE:aqi                # NeoPixel mode select
-COLOR:255,0,0           # NeoPixel direct color set
 ```
 
 **Arduino → Host (telemetry, sent periodically, one reading per line):**
@@ -113,12 +108,16 @@ data before it hits the database or API layer.
   should already assume at least one WiFi plug exists and expose endpoints for it (state,
   toggle, power history) from day one.
 
-## WLED lighting integration
+## Smart bulb lighting integration
 
-- Each ambient-lighting zone is a separate ESP32 running stock **WLED** firmware
-  (open source, local JSON API at `/json/state`, no cloud) — same device abstraction as
-  the myStrom plug, `type = 'wled_zone'`, with an added `mode` column: `manual` or `auto`.
-- `app/wled.py` is the client (get state; push a partial on/brightness/color/effect
+- Each ambient-lighting zone is a single **Shelly Multicolor Bulb E27 Gen3** — a
+  self-contained WiFi RGBW smart bulb (local JSON-RPC API over HTTP, no cloud
+  required) screwed into an ordinary E27 fixture. Same device abstraction as the
+  myStrom plug, `type = 'bulb_zone'`, with an added `mode` column: `manual` or
+  `auto`. There is no separate microcontroller or addressable strip per zone — the
+  bulb *is* the whole device; the fixture it screws into only ever supplies mains
+  power.
+- `app/shelly_bulb.py` is the client (get state; push a partial on/brightness/color
   update) — mirrors `app/mystrom.py`'s shape, including a mock for `MOCK_HARDWARE=1`.
 - `app/lighting.py` is a **separate** background thread (not the plug poller, not the
   serial reader) that, on its own interval (`LIGHTING_POLL_INTERVAL`), pushes a
@@ -127,9 +126,15 @@ data before it hits the database or API layer.
   `LIGHTING_AUTO_BRIGHTNESS`; at/above it, it turns the zone off. All three are env vars,
   not hardcoded. Zones in `manual` mode are left alone — the dashboard drives those
   directly via `POST /api/devices/:id/state`.
-- Physical setup (flashing WLED, wiring the strip, static IP) happens later — the
-  backend, database schema, and API already assume both zones exist from day one, same
-  as the myStrom plug.
+- Physical setup (screwing in the bulb, WiFi provisioning, static IP) happens later —
+  the backend, database schema, and API already assume both zones exist from day one,
+  same as the myStrom plug.
+
+(An earlier plan wired an addressable WS2812B/NeoPixel strip directly to the Due for a
+CO2 traffic-light indicator, and drove the two ambient zones off WLED-flashed ESP8266
+boards + strips. Both were dropped in favor of the Shelly bulbs above — simpler, no
+soldering/wiring/power-injection, and the wired indicator wasn't essential. Treat any
+future wired addressable lighting as a fresh addition, not a revival of that plan.)
 
 ## House modes (scenes)
 
@@ -142,10 +147,10 @@ data before it hits the database or API layer.
   devices no key covers, are left alone. Three seeded scenes (insert-if-missing,
   so hand edits to the rows survive restarts; rows still exactly on an earlier
   seed revision are migrated at startup):
-  - **Sleeping** — every LED zone off, every unlocked plug off.
+  - **Sleeping** — every bulb zone off, every unlocked plug off.
   - **Day** — every unlocked plug on; deliberately *no* zone targets (see
     suppression below).
-  - **Away** — every LED zone off, every unlocked plug off.
+  - **Away** — every bulb zone off, every unlocked plug off.
   (Sleeping and Away share device targets; they differ in the wake-time
   scheduling and morning summary that only Sleeping carries.)
 - The active scene (name + activation timestamp + pending wake time) persists in
@@ -269,20 +274,25 @@ data before it hits the database or API layer.
 ## Host stack
 
 - Server: Python/Flask (lightweight, easy serial + REST integration, low idle footprint
-  on 8GB RAM — preferred over Node/Express for this project unless you have a strong
+  on 4GB RAM — preferred over Node/Express for this project unless you have a strong
   reason to deviate).
 - Serial: `pyserial` for Arduino communication over USB.
 - Database: SQLite for sensor time-series data and device state history.
 - Remote access: Tailscale (assume it's available; don't build custom auth/tunneling).
-- Storage: sensor DB, backups, and file sharing live on an already-mounted 1TB USB-C SSD
-  — don't assume the DB has to live on the internal drive.
+- Storage: the Pi boots from and runs entirely off the 1TB USB-C SSD — OS, the sensor DB,
+  backups, and file sharing all live on that one drive. Don't assume the DB has to live
+  on a separate/internal disk.
+- Fallback dev machine: the old MacBook can run the full stack (under `MOCK_HARDWARE=1`
+  for hardware-free development, or for real against the Arduino/WiFi devices if it's
+  ever swapped in as host). Don't write anything into the server that assumes it's
+  running on Pi-specific hardware — it should run unmodified on either machine.
 - No MQTT broker yet — single Arduino node for now. Keep the device/data layer decoupled
   enough that adding Mosquitto later for multi-room nodes doesn't require a rewrite.
 - `MOCK_HARDWARE=1` env var (see `.env.example`) swaps the serial reader, the myStrom
-  client, and the WLED client for fake data generators (plausible sinusoidal sensor
-  drift, wobbling plug wattage, in-memory zone state) so the dashboard is developable
-  end-to-end without any hardware attached. Keep this mode working when touching
-  `serial_reader.py`, `mystrom.py`, or `wled.py`.
+  client, and the Shelly bulb client for fake data generators (plausible sinusoidal
+  sensor drift, wobbling plug wattage, in-memory zone state) so the dashboard is
+  developable end-to-end without any hardware attached. Keep this mode working when
+  touching `serial_reader.py`, `mystrom.py`, or `shelly_bulb.py`.
 
 ## API shape (backend)
 
@@ -294,13 +304,13 @@ keep this list in sync when endpoints change:
 - `GET /api/sensors/stats?metric=temp` — 24h min/max/avg + 7d avg, for a widget's expanded view
 - `GET /api/sensors/profile?metric=temp&bucket=30` — "typical day" curve: 7-day average per time-of-day bucket
 - `GET /api/motion/events?range=24h` — recent motion detections + count, for the activity log
-- `GET /api/devices` — list known devices (two myStrom plugs, two WLED zones); plug rows carry `power` (last polled sample), WLED rows carry `mode` and `light` (live state)
+- `GET /api/devices` — list known devices (two myStrom plugs, two Shelly bulb zones); plug rows carry `power` (last polled sample), bulb rows carry `mode` and `light` (live state)
 - `GET /api/devices/:id` — device row with the same per-type fields as above
 - `POST /api/devices/:id/toggle` — turn a WiFi plug on/off
 - `GET /api/devices/:id/power/stats` — 24h/7d average draw + estimated 24h kWh
 - `GET /api/devices/:id/power/history` — power draw over time
-- `POST /api/devices/:id/state` — set a WLED zone's on/brightness/color/effect (any subset)
-- `POST /api/devices/:id/mode` — set a WLED zone's mode: `manual` or `auto`
+- `POST /api/devices/:id/state` — set a bulb zone's on/brightness/color/effect (any subset)
+- `POST /api/devices/:id/mode` — set a bulb zone's mode: `manual` or `auto`
 - `GET/PUT /api/settings/thresholds` — alert thresholds (min/max per metric + plug power draw); a reading outside its band flags that widget on the dashboard
 - `GET /api/scenes` — house modes and their per-device target states
 - `POST /api/scenes/:name/activate` — activate a scene; body may carry `wake_time` ("HH:MM") when activating Sleeping
@@ -329,7 +339,7 @@ keep this list in sync when endpoints change:
 - `GET /api/tasks?list=home&done=false` — filterable to-do list
 - `POST /api/tasks`, `PUT /api/tasks/:id`, `DELETE /api/tasks/:id` — task CRUD (PUT is partial, including `done`)
 - `POST /api/tasks/:id/complete` — one-tap task completion (idempotent)
-- `POST /api/arduino/command` — send a raw `KEY:VALUE` protocol line to the Arduino (exists for any future wired actuator and manual testing; WLED zones do not use this)
+- `POST /api/arduino/command` — send a raw `KEY:VALUE` protocol line to the Arduino (exists for any future wired actuator and manual testing; bulb zones do not use this)
 
 ## Frontend
 
@@ -340,7 +350,7 @@ keep this list in sync when endpoints change:
 - **Three views behind a header VIEW switch (Board / Planner / Health), and only these
   three.** The **Board** stays a single scrolling page of widgets grouped into `.zone`
   sections: **Room conditions** (temp/humidity/light/CO2), **Power** (one plug-pair per
-  WiFi plug: switch + power widget), **Lighting** (one card per WLED zone), **Motion**
+  WiFi plug: switch + power widget), **Lighting** (one card per bulb zone), **Motion**
   (PIR status + activity log). Any further **device type** must follow the same
   pattern: another `.zone` of widgets/cards on the Board, never a new view/tab. The
   **Planner** view (Calendar agenda + To-do panels, quick-add/edit forms, deep-linked
@@ -404,7 +414,7 @@ keep this list in sync when endpoints change:
 - Keep it a single lightweight web app served by the host — no separate build
   infrastructure beyond what's needed for a small SPA or server-rendered pages.
 - Live-ish updates (short polling interval or simple WebSocket) rather than manual
-  refresh, but nothing resource-heavy — this is still constrained by the 8GB host.
+  refresh, but nothing resource-heavy — this is still constrained by the 4GB Pi host.
 
 ## Conventions
 
