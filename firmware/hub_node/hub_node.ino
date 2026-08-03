@@ -138,12 +138,22 @@ void scanI2C() {
 //
 // WHY NOT THE DEFAULTS: Adafruit's begin() leaves MODE_NORMAL with x16
 // oversampling on all three channels and a 0.5 ms standby — converting
-// essentially continuously at maximum rate. That warms the die and the
-// breakout's own regulator, and the heat conducts a few millimetres to the
-// sensing element, which then reports it as room temperature. Those defaults
-// are chosen for out-of-the-box responsiveness, not accuracy. Forced mode at
-// x1 on a 5 s cadence is Bosch's own "weather monitoring" recommendation and
-// leaves the part asleep between reads.
+// essentially continuously at maximum rate. Those defaults are chosen for
+// out-of-the-box responsiveness, not accuracy. Forced mode at x1 on a 5 s
+// cadence is Bosch's own "weather monitoring" recommendation and leaves the
+// part asleep between reads, at roughly 0.3 % duty cycle.
+//
+// MEASURED, so nobody repeats the experiment: this change was made expecting
+// it to cut a self-heating offset, and it did NOT. Over 21 minutes of settled
+// operation the reading moved from ~28.03 C to ~27.95 C — about 0.08 C, an
+// order of magnitude inside the sensor's own +/-0.5 C spec, i.e. nothing.
+// Self-heating is not why this board reads warm. The SCD40 on the same bus, a
+// different chip from a different manufacturer, independently read 30.2-31.3 C
+// at the same time; two unrelated parts agreeing was never going to be
+// explained by each heating itself. The reading is real and the cause is
+// placement — see MANUAL.md section 7.11. Keep forced mode anyway: it is the
+// correct way to run the part and costs nothing, just do not expect degrees
+// from it.
 //
 // Pressure is SAMPLING_NONE because nothing in the hub reads it; skipping it
 // shortens each conversion. Temperature and humidity are unaffected (humidity
