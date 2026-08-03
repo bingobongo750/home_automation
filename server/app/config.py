@@ -28,14 +28,14 @@ load_dotenv()
 SERIAL_PORT = os.environ.get("SERIAL_PORT", "/dev/tty.usbmodem14101")
 SERIAL_BAUD = int(os.environ.get("SERIAL_BAUD", "115200"))
 DB_PATH = os.environ.get("DB_PATH", str(REPO_ROOT / "data" / "home.db"))
-MYSTROM_PLUG_IP = os.environ.get("MYSTROM_PLUG_IP", "192.168.1.50")
-MYSTROM_PLUG2_IP = os.environ.get("MYSTROM_PLUG2_IP", "192.168.1.51")
+MYSTROM_PLUG_IP = os.environ.get("MYSTROM_PLUG_IP", "192.168.0.51")
+MYSTROM_PLUG2_IP = os.environ.get("MYSTROM_PLUG2_IP", "192.168.0.52")
 MYSTROM_POLL_INTERVAL = float(os.environ.get("MYSTROM_POLL_INTERVAL", "10"))
 
 # WLED zones (ambient lighting) — WiFi devices, same lane as the myStrom
 # plugs above. Placeholder IPs until each zone's ESP32 is physically set up.
-WLED_CUPBOARD_IP = os.environ.get("WLED_CUPBOARD_IP", "192.168.1.60")
-WLED_TABLE_IP = os.environ.get("WLED_TABLE_IP", "192.168.1.61")
+WLED_CUPBOARD_IP = os.environ.get("WLED_CUPBOARD_IP", "192.168.0.61")
+WLED_TABLE_IP = os.environ.get("WLED_TABLE_IP", "192.168.0.62")
 
 # Auto-lighting job: how often it re-checks lux and pushes brightness, the
 # lux level below which a zone in 'auto' mode is considered "dark", and the

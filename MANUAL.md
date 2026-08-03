@@ -400,19 +400,19 @@ In your router's DHCP settings, add a **static reservation** for the plug's MAC.
 Do not skip this — the hub stores the IP, and a lease change silently breaks the
 device until you notice `PLUG UNREACHABLE` in the logs.
 
-Suggested: `192.168.1.50` for Plug 1, `192.168.1.51` for Plug 2 (matching the
+Suggested: `192.168.0.51` for Plug 1, `192.168.0.52` for Plug 2 (matching the
 defaults in `.env.example`).
 
 ### 4.3 Verify before touching the hub
 
 ```bash
-curl -s http://192.168.1.50/report
+curl -s http://192.168.0.51/report
 # {"power":0,"relay":false}
 
-curl -s "http://192.168.1.50/relay?state=1"   # on
-curl -s "http://192.168.1.50/relay?state=0"   # off
-curl -s http://192.168.1.50/toggle            # flip
-curl -s http://192.168.1.50/temp              # internal temperature
+curl -s "http://192.168.0.51/relay?state=1"   # on
+curl -s "http://192.168.0.51/relay?state=0"   # off
+curl -s http://192.168.0.51/toggle            # flip
+curl -s http://192.168.0.51/temp              # internal temperature
 ```
 
 If `/report` answers, the hub will work. If it does not, no amount of configuration
@@ -427,8 +427,8 @@ on the hub side will help.
 Put the addresses in `.env`:
 
 ```
-MYSTROM_PLUG_IP=192.168.1.50
-MYSTROM_PLUG2_IP=192.168.1.51
+MYSTROM_PLUG_IP=192.168.0.51
+MYSTROM_PLUG2_IP=192.168.0.52
 MYSTROM_POLL_INTERVAL=10
 ```
 
@@ -439,8 +439,8 @@ MYSTROM_POLL_INTERVAL=10
 >
 > ```bash
 > sqlite3 data/home.db \
->   "UPDATE devices SET ip='192.168.1.50' WHERE name='Plug 1';
->    UPDATE devices SET ip='192.168.1.51' WHERE name='Plug 2';"
+>   "UPDATE devices SET ip='192.168.0.51' WHERE name='Plug 1';
+>    UPDATE devices SET ip='192.168.0.52' WHERE name='Plug 2';"
 > ```
 >
 > Restart the server afterwards — the poller builds its client list at startup.
@@ -492,7 +492,7 @@ as offline. If the fixture has an accessible switch, tape it or use a fixture wi
    five times in a row; the bulb returns to AP mode.
 
 Give each bulb a **static DHCP reservation**, same as the plugs. Suggested
-`192.168.1.60` (Cupboard) and `192.168.1.61` (Table).
+`192.168.0.61` (Cupboard) and `192.168.0.62` (Table).
 
 Cloud can be left disabled — nothing at runtime needs it.
 
@@ -503,22 +503,22 @@ Note this is `RGBCCT.*`, **not** the `Light.*` methods used by simpler Shelly di
 
 ```bash
 # identity
-curl -s http://192.168.1.60/rpc/Shelly.GetDeviceInfo
+curl -s http://192.168.0.61/rpc/Shelly.GetDeviceInfo
 
 # state
-curl -s "http://192.168.1.60/rpc/RGBCCT.GetStatus?id=0"
+curl -s "http://192.168.0.61/rpc/RGBCCT.GetStatus?id=0"
 
 # on, half brightness, warm orange
-curl -s "http://192.168.1.60/rpc/RGBCCT.Set?id=0&on=true&brightness=50&rgb=[255,176,102]"
+curl -s "http://192.168.0.61/rpc/RGBCCT.Set?id=0&on=true&brightness=50&rgb=[255,176,102]"
 
 # off
-curl -s "http://192.168.1.60/rpc/RGBCCT.Set?id=0&on=false"
+curl -s "http://192.168.0.61/rpc/RGBCCT.Set?id=0&on=false"
 ```
 
 Or as JSON-RPC POST, which is the form the hub client should use:
 
 ```bash
-curl -s -X POST http://192.168.1.60/rpc \
+curl -s -X POST http://192.168.0.61/rpc \
   -H 'Content-Type: application/json' \
   -d '{"id":1,"method":"RGBCCT.Set","params":{"id":0,"on":true,"brightness":50}}'
 ```
@@ -729,13 +729,13 @@ SERIAL_BAUD=115200
 
 DB_PATH=/home/<user>/home_automation/data/home.db
 
-MYSTROM_PLUG_IP=192.168.1.50
-MYSTROM_PLUG2_IP=192.168.1.51
+MYSTROM_PLUG_IP=192.168.0.51
+MYSTROM_PLUG2_IP=192.168.0.52
 MYSTROM_POLL_INTERVAL=10
 
 # rename these two once §5.4 is done
-WLED_CUPBOARD_IP=192.168.1.60
-WLED_TABLE_IP=192.168.1.61
+WLED_CUPBOARD_IP=192.168.0.61
+WLED_TABLE_IP=192.168.0.62
 
 LIGHTING_POLL_INTERVAL=30
 LIGHTING_LUX_THRESHOLD=50
@@ -1055,9 +1055,9 @@ bring-up:
 | `SERIAL_PORT` | `/dev/tty.usbmodem14101` | Mac: `/dev/tty.usb*`. Pi: use `/dev/serial/by-id/…` |
 | `SERIAL_BAUD` | `115200` | Must match the firmware |
 | `DB_PATH` | `./data/home.db` | On the Pi, anywhere on the card — the default is fine |
-| `MYSTROM_PLUG_IP` / `_PLUG2_IP` | `192.168.1.50` / `.51` | Seeds only — see §4.4 |
+| `MYSTROM_PLUG_IP` / `_PLUG2_IP` | `192.168.0.51` / `.52` | Seeds only — see §4.4 |
 | `MYSTROM_POLL_INTERVAL` | `10` (s) | Plug state + power sampling |
-| `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` | `192.168.1.60` / `.61` | Rename to `SHELLY_*` in §5.4 |
+| `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` | `192.168.0.61` / `.62` | Rename to `SHELLY_*` in §5.4 |
 | `LIGHTING_POLL_INTERVAL` | `30` (s) | Auto-lighting tick |
 | `LIGHTING_LUX_THRESHOLD` | `50` (lux) | Below this counts as dark |
 | `LIGHTING_AUTO_BRIGHTNESS` | `180` (0–255) | Applied when dark |
