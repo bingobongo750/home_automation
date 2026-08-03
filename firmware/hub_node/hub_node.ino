@@ -44,7 +44,10 @@ const uint8_t PIN_PIR      = 2;   // HC-SR501 output
 const uint8_t PIN_RELAY1   = 7;   // future: opto-isolated relay module IN1
 const uint8_t PIN_DIM1     = 9;   // future: IRLZ44N gate (PWM-capable pin)
 const uint8_t PIN_NEOPIXEL = 6;   // future: WS2812B data line
-// I2C on the Due: SDA = pin 20, SCL = pin 21 (labeled on the board).
+// I2C on the Due: SDA = pin 20, SCL = pin 21 (labeled on the board). Named here
+// because recoverI2C() drives them directly, before Wire.begin() claims them.
+const uint8_t PIN_SDA      = 20;
+const uint8_t PIN_SCL      = 21;
 
 // ---- Timing ----
 const unsigned long REPORT_INTERVAL_MS = 5000;  // sensor report cadence
@@ -63,6 +66,74 @@ bool scdOk = false;
 int lastMotion = 0;
 String rxBuffer;  // reserve()d in setup to limit heap fragmentation
 
+// A slave that was reset mid-transfer (which happens every time the Due is
+// reset or reflashed, since the sensors keep their 3.3V rail) can hold SDA low
+// indefinitely, wedging the whole bus — every device then looks absent. The
+// standard fix is to clock SCL until the slave finishes the byte it thinks it
+// is sending, then issue a STOP. Cheap, safe, and it turns a "drive over and
+// unplug it" failure into a self-healing one on a 24/7 box.
+//
+// Runs before Wire.begin() takes the pins. Logs the idle line levels, which
+// distinguish the three failure modes: both HIGH = healthy idle bus, SDA LOW =
+// wedged slave, both LOW = no pull-ups (sensor power gone, or a short).
+void recoverI2C() {
+  pinMode(PIN_SDA, INPUT_PULLUP);
+  pinMode(PIN_SCL, INPUT_PULLUP);
+  delayMicroseconds(10);
+
+  Serial.print(F("# I2C idle: SDA="));
+  Serial.print(digitalRead(PIN_SDA) == HIGH ? F("HIGH") : F("LOW"));
+  Serial.print(F(" SCL="));
+  Serial.println(digitalRead(PIN_SCL) == HIGH ? F("HIGH") : F("LOW"));
+
+  if (digitalRead(PIN_SDA) == HIGH) {
+    return;  // bus is idle, nothing to recover
+  }
+
+  Serial.println(F("# I2C: SDA held low — clocking the bus free"));
+  pinMode(PIN_SCL, OUTPUT);
+  for (uint8_t i = 0; i < 9 && digitalRead(PIN_SDA) == LOW; i++) {
+    digitalWrite(PIN_SCL, LOW);
+    delayMicroseconds(5);
+    digitalWrite(PIN_SCL, HIGH);
+    delayMicroseconds(5);
+  }
+
+  // STOP condition: SDA rises while SCL is high.
+  pinMode(PIN_SDA, OUTPUT);
+  digitalWrite(PIN_SDA, LOW);
+  delayMicroseconds(5);
+  digitalWrite(PIN_SCL, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(PIN_SDA, HIGH);
+  delayMicroseconds(5);
+
+  pinMode(PIN_SDA, INPUT_PULLUP);
+  pinMode(PIN_SCL, INPUT_PULLUP);
+  Serial.print(F("# I2C: after recovery SDA="));
+  Serial.println(digitalRead(PIN_SDA) == HIGH ? F("HIGH (freed)") : F("LOW (still stuck)"));
+}
+
+// Bring-up diagnostic: list every address that ACKs on the bus, so a missing
+// sensor can be told apart from a dead bus without swapping in a scanner sketch.
+// Prints a '#' log line, which the host parser ignores.
+void scanI2C() {
+  Serial.print(F("# I2C scan:"));
+  uint8_t found = 0;
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      Serial.print(F(" 0x"));
+      Serial.print(addr, HEX);
+      found++;
+    }
+  }
+  if (found == 0) {
+    Serial.print(F(" nothing found"));
+  }
+  Serial.println();
+}
+
 void setup() {
   Serial.begin(115200);
   rxBuffer.reserve(32);
@@ -73,15 +144,18 @@ void setup() {
   pinMode(PIN_DIM1, OUTPUT);
   analogWrite(PIN_DIM1, 0);
 
+  // '#' lines are logs; the host parser skips them.
+  Serial.println(F("# hub_node boot"));
+  recoverI2C();  // must run before Wire.begin() claims SDA/SCL
+
   Wire.begin();
+  scanI2C();  // what is actually on the bus, before any driver touches it
 
   // Try both common BME280 addresses (0x76 on most clone breakouts, 0x77 Adafruit)
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
   bhOk = lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE);
   scdOk = co2Sensor.begin();  // starts periodic measurement by default
 
-  // '#' lines are logs; the host parser skips them.
-  Serial.println(F("# hub_node boot"));
   Serial.print(F("# BME280: "));  Serial.println(bmeOk ? F("ok") : F("NOT FOUND"));
   Serial.print(F("# BH1750: "));  Serial.println(bhOk ? F("ok") : F("NOT FOUND"));
   Serial.print(F("# SCD40:  "));  Serial.println(scdOk ? F("ok") : F("NOT FOUND"));
@@ -127,8 +201,20 @@ void reportSensors() {
   // SCD40 self-paces (~5s measurement interval); readMeasurement() returns
   // true only when a fresh sample was fetched, so stale ticks are skipped.
   if (scdOk && co2Sensor.readMeasurement()) {
+    uint16_t co2 = co2Sensor.getCO2();
     Serial.print(F("CO2:"));
-    Serial.println(co2Sensor.getCO2());
+    Serial.println(co2);
+
+    // Bring-up diagnostic, remove once CO2 reads sanely. The same 9-byte frame
+    // carries T and RH: an all-zero frame reads t=-45.00 rh=0.0 (the sensor has
+    // produced no measurement), whereas plausible T/RH with co2=0 means only the
+    // CO2 channel is invalid. The two have completely different causes.
+    if (co2 == 0) {
+      Serial.print(F("# SCD40 zero frame: t="));
+      Serial.print(co2Sensor.getTemperature(), 2);
+      Serial.print(F(" rh="));
+      Serial.println(co2Sensor.getHumidity(), 1);
+    }
   }
 
   Serial.print(F("MOTION:"));
