@@ -4,7 +4,7 @@ A self-contained module — its own tables (`events`, `tasks`, created by
 init_db() here, not in db.SCHEMA), its own blueprint under /api/events and
 /api/tasks. Nothing in the device/scene lanes depends on planner data; the
 single outward touch is scenes.py calling morning_snapshot() for today's
-events and attention-worthy tasks when it builds the Sleeping->Day summary.
+events and attention-worthy tasks when it builds the Sleeping->Home summary.
 
 Conventions:
 - Event start/end are unix epoch seconds, like every other timestamp in the
@@ -519,7 +519,7 @@ def tasks_delete(task_id: int):
 
 def morning_snapshot(now: float | None = None) -> dict:
     """Today's calendar + attention-worthy tasks, embedded by scenes.py in
-    the Sleeping->Day morning summary. "Today" is the local day containing
+    the Sleeping->Home morning summary. "Today" is the local day containing
     `now` — the day being woken into. Capped so the stored summary stays
     small: 10 events, 10 tasks (open AND overdue-or-high-priority)."""
     now = now if now is not None else time.time()

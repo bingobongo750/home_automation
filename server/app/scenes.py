@@ -1,4 +1,4 @@
-"""House modes (scenes): Sleeping / Day / Away.
+"""House modes (scenes): Sleeping / Home / Away.
 
 A scene is a named, manually-triggered state that sets several devices at
 once — the myStrom plug(s) via poller.plugs and the bulb zones via
@@ -8,15 +8,15 @@ db.SCENE_SEEDS, editable there); states are keyed by the group keys
 (overriding the group for that device) — see GROUP_KEYS below. The active
 scene persists in the settings table so it survives backend restarts.
 
-While any scene other than "Day" is active, the auto-lighting job
+While any scene other than "Home" is active, the auto-lighting job
 (app/lighting.py) is suppressed so the scene's explicit values win. Zones'
-`mode` columns are never rewritten by a scene — returning to "Day" lifts the
+`mode` columns are never rewritten by a scene — returning to "Home" lifts the
 suppression, and any zone still set to 'auto' resumes lux-driven brightness
 on the next tick (activation pokes the job so that tick happens immediately).
 
 Wake time: activating Sleeping may carry an optional "HH:MM" wake time. A
 plain threading.Timer (in-process, no job-queue dependency) then switches the
-scene to Day at that time. It ONLY switches the scene — it is not an alarm
+scene to Home at that time. It ONLY switches the scene — it is not an alarm
 and never notifies, sounds, or wakes anyone. Any scene activation cancels the
 pending timer, so a manual change before the wake time always wins; a
 generation counter makes an already-running stale timer a no-op. The pending
@@ -25,13 +25,13 @@ wake is stored with the active scene, so init() re-arms it after a restart
 
 Nightly schedule: a stored sleep window (db.get_sleep_schedule — default
 00:00 to 09:30, editable from the dashboard's settings dialog) activates
-Sleeping every night and hands back to Day in the morning, reusing the wake
+Sleeping every night and hands back to Home in the morning, reusing the wake
 machinery above so the morning summary works exactly as it does manually. Its
 bedtime timer is separate from the wake timer, since a manual scene change
 must beat tonight's pending wake without cancelling tomorrow's bedtime. Like
 the wake timer it only switches scenes — it is not an alarm.
 
-Morning summary: every Sleeping -> Day transition (scheduled or manual)
+Morning summary: every Sleeping -> Home transition (scheduled or manual)
 computes overnight stats from the readings table over the Sleeping window —
 temp/hum min/max/avg, CO2 start vs end (flagged if it climbed significantly),
 and motion events — plus a planner snapshot (today's events, overdue/
@@ -53,7 +53,7 @@ log = logging.getLogger("scenes")
 
 # The neutral scene: normal operation, auto lighting enabled. Also what the
 # backend assumes when no scene has ever been activated.
-DEFAULT_SCENE = "Day"
+DEFAULT_SCENE = "Home"
 
 # CO2 rise (ppm) across the sleep window that flags "climbed significantly"
 # in the morning summary — roughly one "ventilate soon" step.
@@ -92,7 +92,7 @@ def next_wake_at(wake_time: str, now: float | None = None) -> float:
 
 
 def active_info() -> dict:
-    """Current scene for GET /api/scenes/active — defaults to Day (with no
+    """Current scene for GET /api/scenes/active — defaults to Home (with no
     activation timestamp) when nothing was ever activated."""
     active = db.get_active_scene()
     if active is None:
@@ -127,7 +127,7 @@ def activate(name: str, wake_time: str | None = None, *,
         now = time.time()
 
         summary = None
-        if prev and prev["name"] == "Sleeping" and scene["name"] == "Day":
+        if prev and prev["name"] == "Sleeping" and scene["name"] == "Home":
             summary = _compute_sleep_summary(prev["activated_at"], now)
             db.set_setting("last_sleep_summary", summary)
             log.info("Overnight summary stored for %.1fh Sleeping window",
@@ -150,7 +150,7 @@ def activate(name: str, wake_time: str | None = None, *,
 
     lighting.poke()  # suppression changed either way — let the job react now
     log.info("Scene '%s' activated (%s)%s", scene["name"], source,
-             f", wake to Day at {wake_time}" if wake_time else "")
+             f", wake to Home at {wake_time}" if wake_time else "")
     return {
         "active": {"name": scene["name"], "activated_at": activated_at,
                    "wake_time": wake_time, "wake_at": wake_at},
@@ -161,7 +161,7 @@ def activate(name: str, wake_time: str | None = None, *,
 
 def init() -> None:
     """Called once at startup (after poller/lighting built their device
-    clients): arm the nightly schedule, and restore a pending Sleeping->Day
+    clients): arm the nightly schedule, and restore a pending Sleeping->Home
     wake from the persisted active scene. An overdue wake — the time passed
     while the backend was down — fires immediately, synchronously, so the
     house isn't stuck in Sleeping."""
@@ -170,13 +170,13 @@ def init() -> None:
     if not active or active["name"] != "Sleeping" or not active.get("wake_at"):
         return
     if active["wake_at"] <= time.time():
-        log.info("Wake time %s passed while the backend was down — switching to Day now",
+        log.info("Wake time %s passed while the backend was down — switching to Home now",
                  active["wake_time"])
         activate(DEFAULT_SCENE, source="overdue wake after restart")
     else:
         with _lock:
             _arm_wake_locked(active["wake_at"])
-        log.info("Re-armed pending wake: Sleeping -> Day at %s", active["wake_time"])
+        log.info("Re-armed pending wake: Sleeping -> Home at %s", active["wake_time"])
 
 
 # --------------------------------------------------------- nightly schedule
@@ -201,7 +201,7 @@ def reschedule_bedtime() -> None:
             return
         at = next_wake_at(sleep_time, time.time())
         _arm_bedtime_locked(at)
-    log.info("Nightly schedule armed: Sleeping at %s, back to Day at %s",
+    log.info("Nightly schedule armed: Sleeping at %s, back to Home at %s",
              sleep_time, schedule["wake_time"])
 
 
@@ -225,7 +225,7 @@ def _cancel_bedtime_locked() -> None:
 
 def _fire_bedtime(generation: int) -> None:
     """Timer callback: activate Sleeping for the night, carrying the
-    schedule's wake time so the existing Sleeping->Day machinery (and its
+    schedule's wake time so the existing Sleeping->Home machinery (and its
     morning summary) handles the other end. Re-arms itself for tomorrow."""
     try:
         with _lock:
@@ -237,7 +237,7 @@ def _fire_bedtime(generation: int) -> None:
                 return
             # Away is the strongest state: nothing automatic may override it.
             # Without this the nightly timer puts an empty flat into Sleeping,
-            # and the morning wake then switches it to Day — lights and plugs
+            # and the morning wake then switches it to Home — lights and plugs
             # on in a house nobody is in, the exact opposite of the intent.
             # Same principle as init(), which refuses to back-fill a window it
             # slept through rather than overriding a deliberate Away.
@@ -255,7 +255,7 @@ def _fire_bedtime(generation: int) -> None:
             try:
                 activate("Sleeping", wake_time, source="nightly schedule")
             except Exception:
-                log.exception("Scheduled Day -> Sleeping transition failed")
+                log.exception("Scheduled Home -> Sleeping transition failed")
     finally:
         # Always come round again, even if tonight's activation blew up —
         # one bad night must not silently end the recurring schedule.
@@ -283,7 +283,7 @@ def _cancel_wake_locked() -> None:
 
 
 def _fire_wake(generation: int) -> None:
-    """Timer callback: switch Sleeping -> Day, unless this timer was
+    """Timer callback: switch Sleeping -> Home, unless this timer was
     superseded by a manual scene change after it was armed."""
     with _lock:
         if generation != _wake_generation:
@@ -293,11 +293,11 @@ def _fire_wake(generation: int) -> None:
         if not active or active["name"] != "Sleeping":
             log.info("Wake timer fired but scene is no longer Sleeping — ignored")
             return
-        log.info("Wake time reached — switching Sleeping -> Day (scene change only, not an alarm)")
+        log.info("Wake time reached — switching Sleeping -> Home (scene change only, not an alarm)")
         try:
             activate(DEFAULT_SCENE, source="wake schedule")
         except Exception:
-            log.exception("Scheduled Sleeping -> Day transition failed")
+            log.exception("Scheduled Sleeping -> Home transition failed")
 
 
 # --------------------------------------------------------- device application
@@ -425,7 +425,7 @@ def cluster_events(timestamps: list, gap_s: float) -> list[dict]:
 
 def _compute_away_summary(since: float, until: float) -> dict:
     """What happened while the house was empty — computed once at the
-    Away -> (Day|Sleeping) transition, stored as settings.last_away_summary.
+    Away -> (Home|Sleeping) transition, stored as settings.last_away_summary.
 
     Deliberately different content from the overnight summary: that one is
     about sleep quality, this one is about whether anything happened in a room
@@ -483,9 +483,15 @@ def _compute_away_summary(since: float, until: float) -> dict:
 
 # ------------------------------------------------------------ morning summary
 
+def _night_awakenings(since: float, until: float) -> list[dict]:
+    """Motion during the Sleeping window, clustered into times you got up."""
+    stamps = [e["ts"] for e in db.motion_events(since, limit=2000, until=until)]
+    return cluster_events(stamps, config.DISTURBANCE_COOLDOWN_S)
+
+
 def _compute_sleep_summary(since: float, until: float) -> dict:
     """Overnight stats from the existing readings table, plus the planner's
-    look at the day being woken into — computed once at the Sleeping -> Day
+    look at the day being woken into — computed once at the Sleeping -> Home
     transition, stored as settings.last_sleep_summary."""
     co2_start, co2_end = db.metric_window_endpoints("co2", since, until)
     co2_delta = round(co2_end - co2_start) if co2_start is not None and co2_end is not None else None
@@ -505,9 +511,20 @@ def _compute_sleep_summary(since: float, until: float) -> dict:
             "delta": co2_delta,
             "rose_significantly": co2_delta is not None and co2_delta >= CO2_RISE_FLAG_PPM,
         },
+        # Times you got out of bed, not raw PIR rows. A detection holds for as
+        # long as the sensor keeps seeing you, so a raw count mostly measures
+        # how long you were up and is not comparable night to night; clustered,
+        # "3" means three separate times. Getting up and coming back inside
+        # DISTURBANCE_COOLDOWN_S is deliberately one awakening.
+        #
+        # NOT the same thing as the Health module's Awakenings sub-score, which
+        # comes from Apple Health sleep stages — you can wake without getting
+        # up, so this is a strict subset measured a different way. Kept
+        # separate on purpose; conflating them would corrupt a scored input.
         "motion": {
-            "count": db.motion_count(since, until),
-            "events": [e["ts"] for e in db.motion_events(since, limit=30, until=until)],
+            "count": len(_night_awakenings(since, until)),
+            "samples": db.motion_count(since, until),
+            "events": [e["start"] for e in _night_awakenings(since, until)[:20]],
         },
         # today's events + overdue/high-priority tasks — same summary, one
         # more section, so the morning card stays a single report

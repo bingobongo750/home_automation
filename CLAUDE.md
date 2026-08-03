@@ -180,42 +180,42 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
   so hand edits to the rows survive restarts; rows still exactly on an earlier
   seed revision are migrated at startup):
   - **Sleeping** — every bulb zone off, every unlocked plug off.
-  - **Day** — every unlocked plug on; deliberately *no* zone targets (see
+  - **Home** — every unlocked plug on; deliberately *no* zone targets (see
     suppression below).
   - **Away** — every bulb zone off, every unlocked plug off.
   (Sleeping and Away share device targets; they differ in the wake-time
   scheduling and morning summary that only Sleeping carries.)
 - The active scene (name + activation timestamp + pending wake time) persists in
   the `settings` table so it survives backend restarts. Never-activated counts
-  as "Day" — normal operation.
+  as "Home" — normal operation.
 - **Nightly schedule:** a stored sleep window (`GET/PUT /api/settings/sleep-schedule`,
   default 00:00 → 09:30, edited in the settings dialog) activates Sleeping every night
-  and hands back to Day in the morning, reusing the wake machinery below so the morning
+  and hands back to Home in the morning, reusing the wake machinery below so the morning
   summary works exactly as it does manually. Its bedtime timer is deliberately
   **separate** from the wake timer: a manual scene change must beat tonight's pending
   wake without cancelling tomorrow's bedtime. A restart mid-window does not back-fill —
   it arms the next bedtime and leaves the current scene alone, so coming back up at
   02:00 never overrides a house someone deliberately put in Away. Scene changes only,
   never an alarm.
-- **Auto-lighting suppression:** while any scene other than "Day" is active, the
+- **Auto-lighting suppression:** while any scene other than "Home" is active, the
   lux-based auto job in `app/lighting.py` is paused wholesale — the scene's
   explicit values win. A scene never rewrites a zone's `mode` column, so
-  returning to "Day" resumes lux control on any zone still set to `auto`
+  returning to "Home" resumes lux control on any zone still set to `auto`
   (activation pokes the lighting job so it reacts immediately, not a tick later),
   and `manual` zones stay wherever the scene/user left them.
 - Locked plugs are never switched by a scene — skipped and reported per-device in
   the activation response, same protection as the dashboard toggle. One
   unreachable device never blocks the rest of a scene.
-- **Wake time (Sleeping → Day):** activating Sleeping accepts an optional
+- **Wake time (Sleeping → Home):** activating Sleeping accepts an optional
   `wake_time` ("HH:MM", local). A plain in-process `threading.Timer` (no
-  job-queue dependency) then switches the scene to Day at that time. It ONLY
+  job-queue dependency) then switches the scene to Home at that time. It ONLY
   switches the scene — explicitly not an alarm: no sound, no notification.
   Blank/absent means Sleeping holds until changed manually. Any scene activation
   cancels the pending timer (a generation counter makes a stale timer that
   already started firing a no-op). The pending wake is persisted with the active
   scene and re-armed at startup; one that came due while the backend was down
   fires immediately.
-- **Morning summary:** every Sleeping → Day transition (scheduled or manual)
+- **Morning summary:** every Sleeping → Home transition (scheduled or manual)
   computes overnight stats from the existing `readings` table over the Sleeping
   window — temp/hum min/max/avg, CO2 average plus start vs end (flagged if it
   climbed ≥ 200 ppm; the dashboard headlines the average, since a signed delta
@@ -233,14 +233,14 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
   editing a Shortcut. Imports `scenes`, never the reverse.
 - **Away is the strongest state.** Nothing automatic overrides it — `_fire_bedtime()`
   skips an Away house (otherwise the nightly timer puts an empty flat into Sleeping and
-  the morning wake then switches it to Day, lights on in a house nobody is in), and
+  the morning wake then switches it to Home, lights on in a house nobody is in), and
   activating Away already cancels a pending wake. Only an arrival or a manual pick ends it.
 - **Departure is delayed, arrival is immediate.** A departure applies only after
   `PRESENCE_DEPART_GRACE_S`, so a bouncing geofence cannot strobe the room; a second
   departure does not restart the countdown. Arrival gets no grace — the point is lights
-  on when you walk in — and **only ever ends Away**: a house in Day or Sleeping is left
+  on when you walk in — and **only ever ends Away**: a house in Home or Sleeping is left
   alone, which is what stops a stray geofence event overriding a scene chosen by hand.
-- Arrival resolves to **Day or Sleeping** from the stored nightly window (wrap-past-
+- Arrival resolves to **Home or Sleeping** from the stored nightly window (wrap-past-
   midnight handled), carrying the schedule's own `wake_time` when it lands inside, so
   getting home at 02:00 still produces the morning summary.
 - **The away summary's window ends `PRESENCE_ARRIVAL_TRIM_S` before the detected
@@ -288,7 +288,7 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
 - Both tables carry an unused `external_uid` column, reserved so a future
   CalDAV sync layer (e.g. Radicale) can map external UIDs onto rows without a
   schema rewrite — keep any new planner fields similarly plain.
-- **Morning summary integration:** the Sleeping→Day summary embeds
+- **Morning summary integration:** the Sleeping→Home summary embeds
   `planner.morning_snapshot()` under a `planner` key — today's events plus
   open overdue/high-priority tasks (each capped at 10), snapshotted once at
   the transition. One summary, not a second report system; summaries stored
@@ -407,8 +407,8 @@ keep this list in sync when endpoints change:
 - `GET /api/scenes` — house modes and their per-device target states
 - `POST /api/scenes/:name/activate` — activate a scene; body may carry `wake_time` ("HH:MM") when activating Sleeping
 - `GET /api/scenes/active` — current scene + activation time + pending wake time (if set)
-- `GET /api/scenes/last-summary` — most recent Sleeping→Day overnight summary (null before the first); carries a `planner` section (today's events + overdue/high-priority tasks)
-- `GET /api/scenes/last-away-summary` — most recent Away→(Day|Sleeping) disturbance summary (null before the first)
+- `GET /api/scenes/last-summary` — most recent Sleeping→Home overnight summary (null before the first); carries a `planner` section (today's events + overdue/high-priority tasks)
+- `GET /api/scenes/last-away-summary` — most recent Away→(Home|Sleeping) disturbance summary (null before the first)
 - `GET /api/presence` — presence state + whether a departure is waiting out its grace
 - `POST /api/presence/departed` / `POST /api/presence/arrived` — phone-driven presence (no body, so an iPhone Shortcut is one action); see `app/presence.py` and `docs/presence-design.md`
 - `GET /api/events?from=YYYY-MM-DD&range=7d` — calendar events in a date window, recurring ones expanded into occurrences
@@ -475,14 +475,14 @@ keep this list in sync when endpoints change:
 - Chart y-axes never run negative except temperature — humidity, lux, CO2 and watts
   have no negative values, so `METRICS.allowNegative` gates the axis padding and
   everything else clamps at 0.
-- A persistent MODE (scene) switch lives in the header — Sleeping/Day/Away, active one
-  lit, pending wake ("→ Day 07:00") shown beside it — since a scene cuts across every
+- A persistent MODE (scene) switch lives in the header — Sleeping/Home/Away, active one
+  lit, pending wake ("→ Home 07:00") shown beside it — since a scene cuts across every
   device zone on the page. Sleeping opens a small dialog with the optional wake time,
-  labeled as an auto-switch to Day, *not* an alarm; Day/Away activate on click. While a
-  non-Day scene is active, auto-mode lighting cards read "Auto paused — ‹scene› scene
+  labeled as an auto-switch to Home, *not* an alarm; Home/Away activate on click. While a
+  non-Home scene is active, auto-mode lighting cards read "Auto paused — ‹scene› scene
   active."
 - The overnight summary is a dismissible card at the top of Room conditions, visible
-  while the house is in Day and there's an undismissed Sleeping→Day summary (dismissal
+  while the house is in Home and there's an undismissed Sleeping→Home summary (dismissal
   is remembered per-summary in localStorage). Its planner half ("Today" / "Needs
   attention") renders from the summary's `planner` key and hides when absent.
 - Planner UI conventions: the calendar is an Apple-Calendar-style **time grid** with

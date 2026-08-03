@@ -1,4 +1,4 @@
-"""Phone-driven presence: automatic Away on departure, Day or Sleeping on
+"""Phone-driven presence: automatic Away on departure, Home or Sleeping on
 return. Built to docs/presence-design.md.
 
 THE SPLIT: the phone reports presence, the host decides the scene. Two iPhone
@@ -20,7 +20,7 @@ FOUR RULES, and each one exists because of a specific failure:
      otherwise strobe the room. Arrival gets no grace because the whole point
      is lights on when you walk in.
 
-  3. Arrival only ever ends Away. If the house is in Day or Sleeping, arrival
+  3. Arrival only ever ends Away. If the house is in Home or Sleeping, arrival
      is a no-op — that is what stops a spurious geofence event from overriding
      a scene chosen deliberately.
 
@@ -55,23 +55,23 @@ def _parse_hhmm(value: str) -> tuple[int, int] | None:
 def scene_for_arrival(now: float | None = None) -> tuple[str, str | None]:
     """-> (scene_name, wake_time) for an arrival at `now`.
 
-    Sleeping if the arrival lands inside the stored nightly window, else Day.
+    Sleeping if the arrival lands inside the stored nightly window, else Home.
     Arriving into the window carries the schedule's own wake_time, exactly as
-    the bedtime timer does, so the normal Sleeping->Day machinery still runs in
+    the bedtime timer does, so the normal Sleeping->Home machinery still runs in
     the morning — getting home at 02:00 must not cost you the morning summary.
     """
     schedule = db.get_sleep_schedule()
     if not schedule.get("enabled"):
-        return "Day", None
+        return "Home", None
 
     start = _parse_hhmm(schedule.get("sleep_time", ""))
     end = _parse_hhmm(schedule.get("wake_time", ""))
     if start is None or end is None:
-        log.error("Nightly schedule has a bad time (%r -> %r); treating arrival as Day",
+        log.error("Nightly schedule has a bad time (%r -> %r); treating arrival as Home",
                   schedule.get("sleep_time"), schedule.get("wake_time"))
-        return "Day", None
+        return "Home", None
     if start == end:
-        return "Day", None  # zero-length window
+        return "Home", None  # zero-length window
 
     local = datetime.fromtimestamp(now if now is not None else time.time())
     minutes = local.hour * 60 + local.minute
@@ -82,7 +82,7 @@ def scene_for_arrival(now: float | None = None) -> tuple[str, str | None]:
         minutes >= start_m or minutes < end_m)   # window wraps past midnight
     if inside:
         return "Sleeping", schedule["wake_time"]
-    return "Day", None
+    return "Home", None
 
 
 def _cancel_depart_locked() -> None:
@@ -159,7 +159,7 @@ def arrived() -> dict:
         _cancel_depart_locked()
         presence = db.get_presence()
         active = db.get_active_scene()
-        scene_now = active["name"] if active else "Day"
+        scene_now = active["name"] if active else "Home"
 
         db.set_presence("home", None, "arrived", now)
 
@@ -201,7 +201,7 @@ def arrived() -> dict:
                     "reason": "scene activation failed"}
 
     log.info("Arrival — %s activated%s", target,
-             f", wake to Day at {wake_time}" if wake_time else "")
+             f", wake to Home at {wake_time}" if wake_time else "")
     return {"presence": "home", "scene": target, "applied": True,
             "reason": ("arrived inside the nightly sleep window"
                        if target == "Sleeping" else "arrived outside the sleep window"),

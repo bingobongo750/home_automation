@@ -1171,7 +1171,7 @@ Return to the tip with `git checkout main`.
 
 ## 9. The two presence Shortcuts (iPhone)
 
-Automatic **Away** when you leave, and **Day** or **Sleeping** when you get back.
+Automatic **Away** when you leave, and **Home** or **Sleeping** when you get back.
 The hub side is built (`app/presence.py`); this is the phone half.
 
 **Prerequisites**
@@ -1229,9 +1229,9 @@ point of the split. The phone says "left" or "arrived"; the host decides.
 |---|---|
 | Leave | Waits `PRESENCE_DEPART_GRACE_S` (120 s), then activates **Away** |
 | Come back within those 120 s | Cancels silently — nothing was applied, so nothing to undo |
-| Arrive, daytime | **Day**, plus the away summary |
+| Arrive, daytime | **Home**, plus the away summary |
 | Arrive, inside your nightly sleep window | **Sleeping**, carrying the schedule's own wake time, so you still get the morning summary |
-| Arrive while the house is already Day or Sleeping | **Nothing** — presence only ever ends Away |
+| Arrive while the house is already Home or Sleeping | **Nothing** — presence only ever ends Away |
 | Stay away overnight | Stays Away. The nightly schedule will not put an empty flat to bed |
 
 ### 9.4 Testing it without leaving the house
@@ -1282,7 +1282,7 @@ nothing.
 | `BULB ZONE UNREACHABLE` | Expected until the bulbs are installed | The seeded zone IPs are placeholders — provision the bulb (§5.2) and update the DB row |
 | Bulb offline | Its fixture's wall switch is off | The bulb needs permanent mains |
 | Auto-lighting oscillates | BH1750 sees the light it controls | Move the sensor; widen `LIGHTING_LUX_THRESHOLD` |
-| Auto-lighting does nothing | A non-Day scene is active, or the zone is `manual` | By design — the card reads "Auto paused"; switch to Day |
+| Auto-lighting does nothing | A non-Home scene is active, or the zone is `manual` | By design — the card reads "Auto paused"; switch to Day |
 | Wake timer did not fire | Backend was down past the time | It fires immediately at startup instead; check that the service is enabled |
 | Health ingest rejected | Aggregated sleep data | Turn off "aggregate sleep data" in Health Auto Export |
 | Dashboard blank / stale | Server down | `systemctl status homehub`; `journalctl -u homehub -n 50` |

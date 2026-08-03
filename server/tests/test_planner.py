@@ -5,7 +5,7 @@ hardware, throwaway DB, no threads. From the server/ directory:
 
 Covers: event CRUD + validation, the date-window query with recurrence
 expansion (daily/weekly, wall-clock times), task CRUD + filters + one-tap
-complete, and the planner section of the Sleeping->Day morning summary.
+complete, and the planner section of the Sleeping->Home morning summary.
 """
 
 import os
@@ -337,7 +337,7 @@ class PlannerTestCase(unittest.TestCase):
         self.add_task(title="Overdue chore",
                       due_date=(date.today() - timedelta(days=2)).isoformat())
         db.set_active_scene("Sleeping", time.time() - 8 * 3600)
-        resp = self.client.post("/api/scenes/Day/activate", json={})
+        resp = self.client.post("/api/scenes/Home/activate", json={})
         self.assertEqual(resp.status_code, 200)
 
         summary = self.client.get("/api/scenes/last-summary").get_json()["summary"]

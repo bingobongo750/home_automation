@@ -5,7 +5,7 @@ physical devices. From the server/ directory:
 
 Covers: seeded scene definitions, activation applying device states,
 auto-lighting suppression, the wake-time scheduler (arm, cancel, stale-fire
-guard, overdue-at-startup), and the Sleeping->Day overnight summary.
+guard, overdue-at-startup), and the Sleeping->Home overnight summary.
 """
 
 import os
@@ -83,15 +83,15 @@ class SceneTestCase(unittest.TestCase):
         resp = self.client.get("/api/scenes")
         self.assertEqual(resp.status_code, 200)
         by_name = {s["name"]: s for s in resp.get_json()}
-        self.assertEqual(set(by_name), {"Sleeping", "Day", "Away"})
+        self.assertEqual(set(by_name), {"Sleeping", "Home", "Away"})
         # every plug and every zone off while sleeping — group keys, so a
         # future third plug/zone is covered without touching the scene
         sleeping = by_name["Sleeping"]["states"]
         self.assertFalse(sleeping["all_plugs"]["on"])
         self.assertFalse(sleeping["all_zones"]["on"])
         # Day has no zone targets — zones resume their own mode instead
-        self.assertTrue(by_name["Day"]["states"]["all_plugs"]["on"])
-        self.assertNotIn("all_zones", by_name["Day"]["states"])
+        self.assertTrue(by_name["Home"]["states"]["all_plugs"]["on"])
+        self.assertNotIn("all_zones", by_name["Home"]["states"])
 
     def test_legacy_scene_rows_migrated(self):
         import json
@@ -185,7 +185,7 @@ class SceneTestCase(unittest.TestCase):
         self.assertEqual(db.get_device(room_led_id)["mode"], "auto")
         self.assertEqual(lighting._suppressing_scene(), "Sleeping")
 
-        resp = self.activate("Day")
+        resp = self.activate("Home")
         self.assertEqual(resp.status_code, 200)
         self.assertIsNone(lighting._suppressing_scene())
         self.assertEqual(db.get_device(room_led_id)["mode"], "auto")
@@ -196,7 +196,7 @@ class SceneTestCase(unittest.TestCase):
 
     def test_default_active_scene_is_day(self):
         active = self.client.get("/api/scenes/active").get_json()
-        self.assertEqual(active["name"], "Day")
+        self.assertEqual(active["name"], "Home")
         self.assertIsNone(active["activated_at"])
         self.assertIsNone(lighting._suppressing_scene())
 
@@ -218,7 +218,7 @@ class SceneTestCase(unittest.TestCase):
     def test_wake_time_validation(self):
         self.assertEqual(self.activate("Sleeping", {"wake_time": "25:00"}).status_code, 400)
         self.assertEqual(self.activate("Sleeping", {"wake_time": "7am"}).status_code, 400)
-        self.assertEqual(self.activate("Day", {"wake_time": "07:00"}).status_code, 400)
+        self.assertEqual(self.activate("Home", {"wake_time": "07:00"}).status_code, 400)
         self.assertEqual(self.activate("Sleeping", {"wake_time": 700}).status_code, 400)
         # blank means "no wake time", not an error
         self.assertEqual(self.activate("Sleeping", {"wake_time": "  "}).status_code, 200)
@@ -254,11 +254,11 @@ class SceneTestCase(unittest.TestCase):
         scenes._fire_wake(stale_generation)
         self.assertEqual(db.get_active_scene()["name"], "Away")
 
-    def test_wake_fire_transitions_to_day(self):
+    def test_wake_fire_transitions_to_home(self):
         self.activate("Sleeping", {"wake_time": "07:00"})
         # invoke the pending timer's callback as if the clock had struck
         scenes._fire_wake(scenes._wake_generation)
-        self.assertEqual(db.get_active_scene()["name"], "Day")
+        self.assertEqual(db.get_active_scene()["name"], "Home")
         self.assertIsNone(lighting._suppressing_scene())
         self.assertIsNotNone(db.get_setting("last_sleep_summary"))
 
@@ -267,7 +267,7 @@ class SceneTestCase(unittest.TestCase):
         db.set_active_scene("Sleeping", time.time() - 8 * 3600,
                             "07:00", time.time() - 600)
         scenes.init()
-        self.assertEqual(db.get_active_scene()["name"], "Day")
+        self.assertEqual(db.get_active_scene()["name"], "Home")
         self.assertIsNotNone(db.get_setting("last_sleep_summary"))
 
     def test_future_wake_rearmed_at_startup(self):
@@ -393,7 +393,7 @@ class SceneTestCase(unittest.TestCase):
         db.insert_reading("motion", 1, start - 3600)
 
         db.set_active_scene("Sleeping", start)
-        self.assertEqual(self.activate("Day").status_code, 200)
+        self.assertEqual(self.activate("Home").status_code, 200)
 
         summary = self.client.get("/api/scenes/last-summary").get_json()["summary"]
         self.assertAlmostEqual(summary["from"], start, places=1)
@@ -415,14 +415,14 @@ class SceneTestCase(unittest.TestCase):
         db.insert_reading("co2", 520, start)
         db.insert_reading("co2", 560, start + 5 * 3600)
         db.set_active_scene("Sleeping", start)
-        self.activate("Day")
+        self.activate("Home")
         co2 = db.get_setting("last_sleep_summary")["co2"]
         self.assertEqual(co2["delta"], 40)
         self.assertFalse(co2["rose_significantly"])
 
     def test_summary_survives_empty_window(self):
         db.set_active_scene("Sleeping", time.time() - 3600)
-        self.assertEqual(self.activate("Day").status_code, 200)
+        self.assertEqual(self.activate("Home").status_code, 200)
         summary = db.get_setting("last_sleep_summary")
         self.assertIsNone(summary["temp"]["avg"])
         self.assertIsNone(summary["co2"]["avg"])
@@ -432,7 +432,7 @@ class SceneTestCase(unittest.TestCase):
 
     def test_no_summary_for_away_to_day(self):
         self.activate("Away")
-        data = self.activate("Day").get_json()
+        data = self.activate("Home").get_json()
         self.assertFalse(data["summary_generated"])
         self.assertIsNone(db.get_setting("last_sleep_summary"))
 

@@ -350,7 +350,7 @@ def scenes_list():
 def scene_activate(name: str):
     """Activate a scene by name (case-insensitive). Body (optional):
     {"wake_time": "HH:MM"} — only when activating Sleeping; schedules an
-    automatic switch back to Day at that local time (a scene change only —
+    automatic switch back to Home at that local time (a scene change only —
     NOT an alarm). Blank/absent means Sleeping holds until changed manually."""
     body = request.get_json(silent=True) or {}
     wake_time = body.get("wake_time")
@@ -370,20 +370,20 @@ def scene_activate(name: str):
 @api.get("/scenes/active")
 def scene_active():
     """Current scene + activation time + pending wake time (if any).
-    Defaults to Day when no scene has ever been activated."""
+    Defaults to Home when no scene has ever been activated."""
     return jsonify(scenes.active_info())
 
 
 @api.get("/scenes/last-summary")
 def scene_last_summary():
-    """Most recent Sleeping->Day overnight summary, or {"summary": null}
+    """Most recent Sleeping->Home overnight summary, or {"summary": null}
     before the first one exists."""
     return jsonify({"summary": db.get_setting("last_sleep_summary")})
 
 
 @api.get("/scenes/last-away-summary")
 def scene_last_away_summary():
-    """Most recent Away -> (Day|Sleeping) disturbance summary, or
+    """Most recent Away -> (Home|Sleeping) disturbance summary, or
     {"summary": null} before the first one exists."""
     return jsonify({"summary": db.get_setting("last_away_summary")})
 
@@ -405,7 +405,7 @@ def presence_departed():
 @api.post("/presence/arrived")
 def presence_arrived():
     """Phone came back. Applied immediately, and only ever ends Away — a house
-    in Day or Sleeping is left alone, so a spurious event cannot override a
+    in Home or Sleeping is left alone, so a spurious event cannot override a
     scene chosen by hand."""
     return jsonify(presence.arrived())
 

@@ -930,7 +930,7 @@ def history():
 
 def morning_snapshot(now: float | None = None) -> dict | None:
     """Last night's recovery + sleep scores, embedded by scenes.py in the
-    Sleeping->Day morning summary (mirrors planner.morning_snapshot). Uses the
+    Sleeping->Home morning summary (mirrors planner.morning_snapshot). Uses the
     night just woken into, or the most recent computed night before it. None
     when there's no health data yet, so summaries stay clean."""
     target = night_of(now if now is not None else time.time())

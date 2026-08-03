@@ -14,7 +14,7 @@ Tables
 readings        sensor time series from the Arduino (metric = temp/hum/lux/co2/motion)
 devices         generic device registry (wifi_plug and bulb_zone rows so far)
 power_readings  plug power/state time series, keyed to devices.id
-scenes          house modes (Sleeping/Day/Away): per-device target states as JSON
+scenes          house modes (Sleeping/Home/Away): per-device target states as JSON
 
 The planner's tables (events, tasks) are owned by app/planner.py — that
 module carries its own DDL and init_db(), called alongside this one.
@@ -108,16 +108,20 @@ BULB_SEEDS = [
 # above), which overrides the group's fields for that one device. Each value
 # is a partial target; fields a scene doesn't mention are left alone. Rows
 # are only inserted when missing, so edits to a scene's states in the DB
-# survive restarts. Note "Day" deliberately has no zone targets: activating
+# survive restarts. Note "Home" deliberately has no zone targets: activating
 # it lifts the auto-lighting suppression, so any zone whose mode is 'auto'
 # resumes lux-driven brightness, and 'manual' zones stay as they are.
 # Locked plugs are always skipped, whatever the scene says.
+#
+# "Home" was called "Day" until the presence module made the name wrong: it is
+# the scene for "someone is in and awake", which is most of the evening too.
+# Time of day is the *nightly schedule's* business, not this scene's.
 SCENE_SEEDS = {
     "Sleeping": {
         "all_plugs": {"on": False},
         "all_zones": {"on": False},
     },
-    "Day": {
+    "Home": {
         "all_plugs": {"on": True},
     },
     "Away": {
@@ -138,7 +142,10 @@ _LEGACY_SCENE_STATES = {
          "Table": {"on": False}},
         {"Plug 1": {"on": False}, "Cupboard": {"on": False}, "Table": {"on": False}},
     ],
-    "Day": [
+    # keyed by the CURRENT name — the Day -> Home rename below runs before this
+    # matcher, so a legacy-stated row is already called "Home" by the time we
+    # look for it
+    "Home": [
         {"Plug 1": {"on": True}},
     ],
     "Away": [
@@ -189,6 +196,22 @@ def init_db() -> None:
                        VALUES (?, 'bulb_zone', ?, ?, 'manual')""",
                     (name, ip, room),
                 )
+        # "Day" -> "Home". The scene means "someone is in and awake", which is
+        # most of the evening too; time of day belongs to the nightly schedule.
+        # Runs BEFORE the seed loop so an existing row is renamed rather than a
+        # second one inserted alongside it, and before the legacy-revision
+        # matcher below so that keys off the new name.
+        conn.execute("UPDATE scenes SET name = 'Home' WHERE name = 'Day'")
+        # ...and the persisted active scene, or the hub would come up pointing
+        # at a scene that no longer exists and silently fall back to a default.
+        active = conn.execute(
+            "SELECT value FROM settings WHERE key = 'active_scene'").fetchone()
+        if active:
+            stored = json.loads(active["value"])
+            if stored.get("name") == "Day":
+                stored["name"] = "Home"
+                conn.execute("UPDATE settings SET value = ? WHERE key = 'active_scene'",
+                             (json.dumps(stored),))
         for name, states in SCENE_SEEDS.items():
             exists = conn.execute(
                 "SELECT 1 FROM scenes WHERE name = ?", (name,)
@@ -273,7 +296,7 @@ def set_lighting(settings: dict) -> None:
 
 
 # Nightly Sleeping window, applied by app/scenes.py. `sleep_time` activates
-# Sleeping, `wake_time` hands back to Day (with the usual morning summary) —
+# Sleeping, `wake_time` hands back to Home (with the usual morning summary) —
 # both plain local "HH:MM", both editable from the dashboard's settings dialog.
 DEFAULT_SLEEP_SCHEDULE = {"enabled": True, "sleep_time": "00:00", "wake_time": "09:30"}
 
@@ -312,14 +335,14 @@ def set_presence(state: str, since: float | None,
 def get_active_scene() -> dict | None:
     """{"name", "activated_at", "wake_time", "wake_at"} for the current house
     mode, or None if no scene has ever been activated (the backend treats
-    that as "Day" — normal operation, auto lighting enabled)."""
+    that as "Home" — normal operation, auto lighting enabled)."""
     return get_setting("active_scene")
 
 
 def set_active_scene(name: str, activated_at: float,
                      wake_time: str | None = None,
                      wake_at: float | None = None) -> None:
-    """Persist the active scene (plus a pending Sleeping->Day wake, if any)
+    """Persist the active scene (plus a pending Sleeping->Home wake, if any)
     so it survives backend restarts — app/scenes.py re-arms the wake timer
     from this record at startup."""
     set_setting("active_scene", {
@@ -507,7 +530,7 @@ def plug_window_summary(device_id: int, since: float, until: float) -> dict:
 
 def metric_window_stats(metric: str, since: float, until: float) -> dict:
     """min/max/avg for one metric over an arbitrary window — used by the
-    overnight (Sleeping->Day) summary in app/scenes.py."""
+    overnight (Sleeping->Home) summary in app/scenes.py."""
     with connect() as conn:
         row = conn.execute(
             """SELECT MIN(value) AS mn, MAX(value) AS mx, AVG(value) AS av

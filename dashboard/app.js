@@ -182,15 +182,38 @@ function renderMetricValues(latest) {
   }
 }
 
+/* Motion means something different in each scene, so each scene shows it
+   differently: suppressed while Home (you are the one moving, and the PIR
+   fires more or less continuously), the primary signal while Away, and the
+   awakenings count while Sleeping.
+
+   Recording never stops — this is a presentation decision only, so "was anyone
+   in the room at 15:00 last Tuesday?" stays answerable. A suppressed control
+   also has to SAY it is suppressed: silently reporting "quiet" while the
+   sensor is firing would be worse than the noise it replaces. Same wording as
+   the auto-lighting cards' "Auto paused — ‹scene› scene active". */
+function motionSuppressed() {
+  return !activeScene || activeScene.name === "Home";
+}
+
 function renderPIR(latest) {
   const r = latest.motion;
   const stateEl = document.getElementById("pir-state");
   const label = document.getElementById("pir-label");
+  const note = document.getElementById("pir-note");
+
+  if (motionSuppressed()) {
+    stateEl.classList.remove("active");
+    label.textContent = "paused";
+    note.textContent = "Motion paused — Home scene active. Still recorded, "
+      + "just not shown while you are the one moving.";
+    return;
+  }
   if (!r) { label.textContent = "no data"; return; }
   const active = Number(r.value) === 1;
   stateEl.classList.toggle("active", active);
   label.textContent = active ? "MOTION" : "quiet";
-  document.getElementById("pir-note").textContent = active
+  note.textContent = active
     ? "PIR is reporting movement right now."
     : `Last report ${relTime(r.ts)}. HC-SR501 on pin D2.`;
 }
@@ -209,7 +232,7 @@ async function pollFast() {
     const prevSceneName = activeScene && activeScene.name;
     activeScene = scene;
     renderScene();
-    if (prevSceneName && prevSceneName !== scene.name && scene.name === "Day") loadSummary();
+    if (prevSceneName && prevSceneName !== scene.name && scene.name === "Home") loadSummary();
     // Leaving Away means a fresh disturbance summary may be waiting. Checked
     // on the transition rather than every poll, same as the overnight one.
     if (prevSceneName === "Away" && scene.name !== "Away") loadAwaySummary();
@@ -696,7 +719,7 @@ function renderLighting(devices, latest) {
       color.disabled = false;
       warmth.disabled = false;
       colorModeBtns.forEach((b) => { b.disabled = false; });
-      const suppressedBy = activeScene && activeScene.name !== "Day" ? activeScene.name : null;
+      const suppressedBy = activeScene && activeScene.name !== "Home" ? activeScene.name : null;
       status.textContent = !isAuto
         ? ""
         : suppressedBy
@@ -1081,7 +1104,7 @@ function summaryStat(label, value, unit, sub, subAlert) {
 
 function renderSummaryCard() {
   const s = lastSummary;
-  const show = s && activeScene && activeScene.name === "Day"
+  const show = s && activeScene && activeScene.name === "Home"
     && localStorage.getItem(SUMMARY_DISMISS_KEY) !== String(s.to);
   if (!show) {
     summaryCard.hidden = true;
@@ -1099,8 +1122,8 @@ function renderSummaryCard() {
   const co2 = s.co2;
   const co2Sub = co2.start === null ? null
     : `${co2.start} → ${co2.end} ppm${co2.rose_significantly ? " · ventilate" : ""}`;
-  const motionSub = s.motion.count === 0 ? "quiet night"
-    : s.motion.events.length ? `last at ${axisTime(s.motion.events[0], 0)}` : null;
+  const motionSub = s.motion.count === 0 ? "slept through"
+    : s.motion.events.length ? `first at ${axisTime(s.motion.events[0], 0)}` : null;
 
   const stats = document.getElementById("summary-stats");
   stats.textContent = "";
@@ -1108,7 +1131,7 @@ function renderSummaryCard() {
     summaryStat("Temp avg", s.temp.avg, "°C", range(s.temp), false),
     summaryStat("Humidity avg", s.hum.avg, "%RH", range(s.hum), false),
     summaryStat("CO₂ avg", co2.avg, "ppm", co2Sub, co2.rose_significantly),
-    summaryStat("Motion events", s.motion.count, null, motionSub, false),
+    summaryStat("Got up", s.motion.count, s.motion.count === 1 ? "time" : "times", motionSub, false),
   );
   renderSummaryHealth(s.health);
   renderSummaryPlanner(s.planner);
@@ -1589,6 +1612,16 @@ function tickLabel(v, decimals) {
 function renderActivityLog(events) {
   const log = document.getElementById("activity-log");
   log.textContent = "";
+  // While Home, every entry would be you crossing your own room — the log
+  // fills up and stops carrying information. Say so rather than showing a
+  // misleading empty list.
+  if (motionSuppressed()) {
+    const li = document.createElement("li");
+    li.className = "log-empty";
+    li.textContent = "Paused while Home — switch to Away or Sleeping to log motion.";
+    log.appendChild(li);
+    return;
+  }
   if (!events.length) {
     const li = document.createElement("li");
     li.className = "log-empty";

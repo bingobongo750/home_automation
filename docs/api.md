@@ -94,10 +94,10 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
 
 ## Scenes (house modes)
 
-Named multi-device states — seeded: `Sleeping`, `Day`, `Away` (definitions
+Named multi-device states — seeded: `Sleeping`, `Home`, `Away` (definitions
 in `app/db.py` `SCENE_SEEDS`, stored per-row in the `scenes` table and
-editable there). While a scene other than `Day` is active, the auto-lighting
-job is suppressed; zones keep their `mode` column, so `Day` resumes lux
+editable there). While a scene other than `Home` is active, the auto-lighting
+job is suppressed; zones keep their `mode` column, so `Home` resumes lux
 control on any zone still set to `auto`. The active scene persists across
 backend restarts.
 
@@ -110,7 +110,7 @@ backend restarts.
 - `POST /scenes/:name/activate` (name is case-insensitive) → applies every
   target and persists the scene. Optional body — only when activating
   Sleeping: `{"wake_time": "HH:MM"}` (local time) schedules an automatic
-  switch back to Day at that time. **A scene change only, not an alarm** —
+  switch back to Home at that time. **A scene change only, not an alarm** —
   no sound, no notification. Blank/absent = stay in Sleeping until changed
   manually. Any activation cancels a pending wake; a pending wake survives
   restarts (overdue ones fire at startup). Response:
@@ -120,12 +120,12 @@ backend restarts.
   unreachable device never blocks the rest. `400` on a bad `wake_time`,
   `404` for an unknown scene.
 - `GET /scenes/active` → `{name, activated_at, wake_time, wake_at}` —
-  defaults to `Day` (null timestamps) if nothing was ever activated.
+  defaults to `Home` (null timestamps) if nothing was ever activated.
 - `GET /scenes/last-summary` → `{"summary": null}` or the most recent
-  Sleeping→Day overnight summary, computed at the transition from existing
+  Sleeping→Home overnight summary, computed at the transition from existing
   readings over the Sleeping window:
   `{"from", "to", "temp": {min,max,avg}, "hum": {min,max,avg},
-  "co2": {avg, start, end, delta, rose_significantly}, "motion": {count, events},
+  "co2": {avg, start, end, delta, rose_significantly}, "motion": {count, samples, events},
   "planner": {events, tasks}}`
   (`co2.avg` is the headline number — the delta can legitimately be
   negative; `rose_significantly` = CO₂ climbed ≥ 200 ppm start→end; null
@@ -151,9 +151,9 @@ and changing that schedule never means editing a Shortcut.
   "pending_departure_at"}`.
 
 - `POST /presence/arrived` → registers a return, applied immediately. **Only
-  ever ends Away**: a house in Day or Sleeping is left untouched, which is what
+  ever ends Away**: a house in Home or Sleeping is left untouched, which is what
   stops a stray geofence event from overriding a scene chosen by hand. Resolves
-  to **Day or Sleeping** from the stored nightly window (handling a window that
+  to **Home or Sleeping** from the stored nightly window (handling a window that
   wraps past midnight), carrying the schedule's own `wake_time` when it lands
   inside — so getting home at 02:00 still yields the morning summary. Returns
   `{"presence", "scene", "applied", "reason", "summary_generated"}`.
@@ -162,7 +162,7 @@ and changing that schedule never means editing a Shortcut.
   "last_event_at", "departure_pending"}`.
 
 - `GET /scenes/last-away-summary` → `{"summary": null}` or the most recent
-  Away→(Day|Sleeping) disturbance summary:
+  Away→(Home|Sleeping) disturbance summary:
   `{"from", "to", "duration_s", "disturbed", "motion": {events, samples, times},
   "co2": {max, start, end, delta, rose_significantly} | null,
   "lux": {max}, "temp": {...}, "hum": {...},

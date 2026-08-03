@@ -25,11 +25,11 @@
       </div>
       <!-- House mode (scene) switch — persistent in the header since a scene
            drives several device types at once. Sleeping opens a dialog with
-           the optional wake time; Day/Away activate directly. -->
+           the optional wake time; Home/Away activate directly. -->
       <div class="scene-switch" id="scene-switch" role="group" aria-label="House mode">
         <span class="switch-group-label">MODE</span>
         <button class="scene-btn" data-scene="Sleeping" aria-pressed="false">Sleeping</button>
-        <button class="scene-btn" data-scene="Day" aria-pressed="false">Day</button>
+        <button class="scene-btn" data-scene="Home" aria-pressed="false">Home</button>
         <button class="scene-btn" data-scene="Away" aria-pressed="false">Away</button>
         <span class="scene-note" id="scene-note"></span>
       </div>
@@ -61,7 +61,7 @@
     <h2 class="zone-label">Room conditions</h2>
 
     <!-- Away summary: what happened while the house was empty, shown after an
-         Away -> (Day|Sleeping) transition. Sits ABOVE the overnight summary
+         Away -> (Home|Sleeping) transition. Sits ABOVE the overnight summary
          because it is the one that might need acting on. Unlike that card it
          shows in any scene — arriving at 02:00 into Sleeping should still
          leave it waiting in the morning. -->
@@ -78,7 +78,7 @@
       <dl class="stat-row" id="away-summary-stats"></dl>
     </article>
 
-    <!-- Overnight summary: shown after a Sleeping -> Day transition (wake
+    <!-- Overnight summary: shown after a Sleeping -> Home transition (wake
          timer or manual switch), filled by app.js from
          /api/scenes/last-summary; the × dismisses it until the next night. -->
     <article class="card summary-card" id="summary-card" hidden>

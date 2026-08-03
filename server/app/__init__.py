@@ -31,7 +31,7 @@ def create_app() -> Flask:
     poller.start()
     lighting.start()
     # After the device clients exist: re-arm (or fire, if overdue) a pending
-    # Sleeping->Day wake persisted before the last shutdown.
+    # Sleeping->Home wake persisted before the last shutdown.
     scenes.init()
 
     app = Flask(

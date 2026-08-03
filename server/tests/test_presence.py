@@ -64,16 +64,16 @@ class ArrivalSceneTestCase(unittest.TestCase):
         db.set_sleep_schedule({"enabled": True, "sleep_time": "00:00", "wake_time": "09:30"})
         self.assertEqual(presence.scene_for_arrival(self.at("02:00"))[0], "Sleeping")
         self.assertEqual(presence.scene_for_arrival(self.at("09:29"))[0], "Sleeping")
-        self.assertEqual(presence.scene_for_arrival(self.at("09:30"))[0], "Day")
-        self.assertEqual(presence.scene_for_arrival(self.at("18:00"))[0], "Day")
+        self.assertEqual(presence.scene_for_arrival(self.at("09:30"))[0], "Home")
+        self.assertEqual(presence.scene_for_arrival(self.at("18:00"))[0], "Home")
 
     def test_window_wrapping_past_midnight(self):
         db.set_sleep_schedule({"enabled": True, "sleep_time": "23:00", "wake_time": "07:00"})
         self.assertEqual(presence.scene_for_arrival(self.at("23:30"))[0], "Sleeping")
         self.assertEqual(presence.scene_for_arrival(self.at("03:00"))[0], "Sleeping")
         self.assertEqual(presence.scene_for_arrival(self.at("06:59"))[0], "Sleeping")
-        self.assertEqual(presence.scene_for_arrival(self.at("07:00"))[0], "Day")
-        self.assertEqual(presence.scene_for_arrival(self.at("22:59"))[0], "Day")
+        self.assertEqual(presence.scene_for_arrival(self.at("07:00"))[0], "Home")
+        self.assertEqual(presence.scene_for_arrival(self.at("22:59"))[0], "Home")
 
     def test_sleeping_arrival_carries_the_schedules_wake_time(self):
         """Getting home at 02:00 must not cost the morning summary."""
@@ -83,15 +83,15 @@ class ArrivalSceneTestCase(unittest.TestCase):
 
     def test_disabled_schedule_is_always_day(self):
         db.set_sleep_schedule({"enabled": False, "sleep_time": "00:00", "wake_time": "09:30"})
-        self.assertEqual(presence.scene_for_arrival(self.at("02:00"))[0], "Day")
+        self.assertEqual(presence.scene_for_arrival(self.at("02:00"))[0], "Home")
 
     def test_zero_length_window_is_always_day(self):
         db.set_sleep_schedule({"enabled": True, "sleep_time": "03:00", "wake_time": "03:00"})
-        self.assertEqual(presence.scene_for_arrival(self.at("03:00"))[0], "Day")
+        self.assertEqual(presence.scene_for_arrival(self.at("03:00"))[0], "Home")
 
     def test_malformed_times_fall_back_to_day(self):
         db.set_sleep_schedule({"enabled": True, "sleep_time": "nonsense", "wake_time": "09:30"})
-        self.assertEqual(presence.scene_for_arrival(self.at("02:00"))[0], "Day")
+        self.assertEqual(presence.scene_for_arrival(self.at("02:00"))[0], "Home")
 
 
 class StateMachineTestCase(unittest.TestCase):
@@ -113,7 +113,7 @@ class StateMachineTestCase(unittest.TestCase):
 
     def scene(self):
         active = db.get_active_scene()
-        return active["name"] if active else "Day"
+        return active["name"] if active else "Home"
 
     def test_departure_applies_away_only_after_the_grace_period(self):
         r = self.client.post("/api/presence/departed").get_json()
@@ -155,10 +155,10 @@ class StateMachineTestCase(unittest.TestCase):
         self.assertIsNone(db.get_active_scene()["wake_at"])  # pending wake cancelled
 
     def test_arrival_while_in_day_is_a_no_op(self):
-        scenes.activate("Day")
+        scenes.activate("Home")
         r = self.client.post("/api/presence/arrived").get_json()
         self.assertFalse(r["applied"])
-        self.assertEqual(self.scene(), "Day")
+        self.assertEqual(self.scene(), "Home")
 
     def test_arrival_while_in_sleeping_is_a_no_op(self):
         """Protects a scene the user chose by hand from a stray geofence."""
@@ -172,7 +172,7 @@ class StateMachineTestCase(unittest.TestCase):
         self.settle()
         r = self.client.post("/api/presence/arrived").get_json()
         self.assertTrue(r["applied"])
-        self.assertIn(r["scene"], ("Day", "Sleeping"))
+        self.assertIn(r["scene"], ("Home", "Sleeping"))
         self.assertEqual(presence.state()["state"], "home")
 
     def test_get_presence_reports_pending_departure(self):
@@ -199,7 +199,7 @@ class BedtimeGuardTestCase(unittest.TestCase):
 
     def test_bedtime_timer_still_fires_when_someone_is_home(self):
         db.set_sleep_schedule({"enabled": True, "sleep_time": "00:00", "wake_time": "09:30"})
-        scenes.activate("Day")
+        scenes.activate("Home")
         with scenes._lock:
             generation = scenes._bedtime_generation
         scenes._fire_bedtime(generation)
@@ -304,6 +304,56 @@ class ArrivalTrimTestCase(unittest.TestCase):
     def test_summary_endpoint_is_null_before_the_first(self):
         self.assertIsNone(self.client.get("/api/scenes/last-away-summary")
                           .get_json()["summary"])
+
+
+class DayToHomeMigrationTestCase(unittest.TestCase):
+    """The rename touches stored rows, so it has to migrate, not just reseed."""
+
+    def test_an_existing_day_row_is_renamed_not_duplicated(self):
+        with db.connect() as conn:
+            conn.execute("UPDATE scenes SET name = 'Day' WHERE name = 'Home'")
+        db.init_db()
+        with db.connect() as conn:
+            names = [r["name"] for r in conn.execute("SELECT name FROM scenes")]
+        self.assertIn("Home", names)
+        self.assertNotIn("Day", names)
+        self.assertEqual(names.count("Home"), 1, "must rename, not insert a twin")
+
+    def test_a_persisted_active_day_scene_is_migrated(self):
+        """Otherwise the hub boots pointing at a scene that no longer exists."""
+        db.set_active_scene("Day", 1785790000.0)
+        db.init_db()
+        self.assertEqual(db.get_active_scene()["name"], "Home")
+
+
+class NightAwakeningsTestCase(unittest.TestCase):
+    """The overnight summary counts times you got up, not PIR rows."""
+
+    def setUp(self):
+        _reset()
+
+    def test_one_long_burst_is_one_awakening(self):
+        now = time.time()
+        for i in range(40):     # 40 samples over ~3 min: one trip to the loo
+            db.insert_reading("motion", 1, ts=now - 3600 + i * 5)
+        s = scenes._compute_sleep_summary(now - 7200, now)
+        self.assertEqual(s["motion"]["count"], 1)
+        self.assertEqual(s["motion"]["samples"], 40, "raw count is kept alongside")
+
+    def test_separate_trips_count_separately(self):
+        now = time.time()
+        for base in (now - 6000, now - 3000, now - 900):
+            for i in range(10):
+                db.insert_reading("motion", 1, ts=base + i * 5)
+        s = scenes._compute_sleep_summary(now - 7200, now)
+        self.assertEqual(s["motion"]["count"], 3)
+
+    def test_undisturbed_night_is_zero(self):
+        now = time.time()
+        for i in range(60):
+            db.insert_reading("motion", 0, ts=now - 3600 + i * 60)
+        s = scenes._compute_sleep_summary(now - 7200, now)
+        self.assertEqual(s["motion"]["count"], 0)
 
 
 if __name__ == "__main__":

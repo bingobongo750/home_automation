@@ -11,9 +11,9 @@ owns (LIGHTING_LUX_THRESHOLD seeds it). See _desired_state.
 Devices in 'manual' mode are left alone; the dashboard drives those directly
 through /api/devices/:id/state.
 
-House modes: while a scene other than 'Day' is active (see app/scenes.py),
+House modes: while a scene other than 'Home' is active (see app/scenes.py),
 the whole job is suppressed — the scene's explicit zone states win, and zones
-keep their 'auto' mode column so returning to Day resumes lux control without
+keep their 'auto' mode column so returning to Home resumes lux control without
 any re-configuration. Scene activation calls poke() so the loop reacts
 immediately instead of waiting out the current sleep interval.
 """
@@ -41,17 +41,17 @@ _poke = threading.Event()
 
 
 def poke() -> None:
-    """Wake the auto loop now — a switch back to Day re-applies lux-driven
+    """Wake the auto loop now — a switch back to Home re-applies lux-driven
     brightness immediately, and a switch away pauses the job immediately."""
     _poke.set()
 
 
 def _suppressing_scene() -> str | None:
     """Name of the active scene suppressing auto mode, or None. Any scene
-    other than 'Day' pins zones to its explicit values — the auto job must
-    not fight it. No scene ever activated counts as 'Day'."""
+    other than 'Home' pins zones to its explicit values — the auto job must
+    not fight it. No scene ever activated counts as 'Home'."""
     active = db.get_active_scene()
-    if active and active["name"] != "Day":
+    if active and active["name"] != "Home":
         return active["name"]
     return None
 
@@ -87,7 +87,7 @@ def _auto_loop() -> None:
             if scene:
                 log.info("Auto lighting paused — '%s' scene active", scene)
             else:
-                log.info("Auto lighting resumed — house back in 'Day'")
+                log.info("Auto lighting resumed — house back in 'Home'")
             suppressed_by = scene
         if scene is None:
             auto_devices = {d["id"] for d in db.list_devices()

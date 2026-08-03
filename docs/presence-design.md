@@ -1,17 +1,20 @@
 # Presence — automatic Away, and the disturbance summary
 
 Design for phone-driven presence: leaving the house puts it in **Away**, coming
-back puts it in **Day** or **Sleeping** depending on the time, and the return
+back puts it in **Home** or **Sleeping** depending on the time, and the return
 shows a summary of anything that happened while nobody was in.
 
 Status: **built.** `app/presence.py`, the `_fire_bedtime` Away guard, the away
 summary and its dashboard card are all implemented and covered by
 `server/tests/test_presence.py`.
 
-Still outstanding from this document: **§9's Day and Sleeping halves** — motion
-is not yet suppressed on the Board during Day, and the overnight summary still
-counts raw motion rows rather than clustered awakenings. §9's Away half is done,
-since the away summary uses the clustering.
+All of it is built, including §9's scene-aware motion policy.
+
+**Naming note:** the scene called "Home" throughout the original draft is now
+**Home**. Writing this document made the old name wrong — it is the scene for
+"someone is in and awake", which is most of the evening too, and time of day is
+the nightly schedule's business. Renamed in `db.SCENE_SEEDS` with a migration
+for stored rows and the persisted active scene.
 
 ---
 
@@ -32,7 +35,7 @@ a scene by hand, ends Away.
 strobe the room, so a departure is confirmed after a grace period. Arrival has
 no grace — the point is that lights are on when you walk in.
 
-**Arrival only ever ends Away.** If the house is in Day or Sleeping, an arrival
+**Arrival only ever ends Away.** If the house is in Home or Sleeping, an arrival
 is a no-op. This is what stops a spurious geofence event from overriding a scene
 you chose deliberately.
 
@@ -76,7 +79,7 @@ Neither action needs a request body, which keeps each Shortcut to one action.
 > lost.
 
 **If a request is lost**, nothing dangerous happens: a lost departure leaves the
-house in Day while you are out; a lost arrival means you come home to an Away
+house in Home while you are out; a lost arrival means you come home to an Away
 house and fix it with the dashboard MODE switch. Shortcuts does not retry, and
 adding retry logic on the phone is not worth it — neither failure is harmful.
 
@@ -134,7 +137,7 @@ nothing.
 
 | Current scene | Behaviour |
 |---|---|
-| Day | Arm the grace timer. On expiry → Away. |
+| Home | Arm the grace timer. On expiry → Away. |
 | Sleeping | Arm the grace timer. On expiry → Away. (Activating Away already cancels the pending wake.) |
 | Away | No-op. Keep the original `since`, so the summary window still covers the whole absence. |
 
@@ -145,8 +148,8 @@ A second `departed` while a grace timer is already armed is a no-op — it does
 
 | Current scene | Behaviour |
 |---|---|
-| Away | → **Day** or **Sleeping** by the rule in §5. Compute the away summary. |
-| Day | No-op. |
+| Away | → **Home** or **Sleeping** by the rule in §5. Compute the away summary. |
+| Home | No-op. |
 | Sleeping | No-op. |
 | *(grace timer armed, Away not yet applied)* | Cancel the timer. Nothing was applied, so nothing to undo. This is the bounce case, and it is silent. |
 
@@ -155,14 +158,14 @@ against a flaky geofence stomping on a deliberate choice.
 
 ---
 
-## 5. Day or Sleeping on arrival
+## 5. Home or Sleeping on arrival
 
 Read the stored schedule (`db.get_sleep_schedule()` — `enabled`, `sleep_time`,
 `wake_time`, local `"HH:MM"`).
 
 ```
-if not enabled                        → Day
-if sleep_time == wake_time            → Day        (zero-length window)
+if not enabled                        → Home
+if sleep_time == wake_time            → Home       (zero-length window)
 if sleep_time <  wake_time            → Sleeping when sleep_time <= now < wake_time
 if sleep_time >  wake_time (wraps)    → Sleeping when now >= sleep_time or now < wake_time
 ```
@@ -172,7 +175,7 @@ not wrap, but any bedtime after midnight-minus-one does.
 
 **Arriving into the sleep window activates Sleeping carrying the schedule's own
 `wake_time`**, exactly as `_fire_bedtime()` does. That way the existing
-Sleeping→Day machinery still runs in the morning and you still get the overnight
+Sleeping→Home machinery still runs in the morning and you still get the overnight
 summary. Getting home at 02:00 must not cost you the morning report.
 
 ---
@@ -181,7 +184,7 @@ summary. Getting home at 02:00 must not cost you the morning report.
 
 `scenes._fire_bedtime()` currently activates Sleeping unconditionally. Away
 would therefore be overwritten at bedtime, and the morning wake would then put
-the house into Day while you are still gone — lights and plugs on in an empty
+the house into Home while you are still gone — lights and plugs on in an empty
 flat, which is the exact opposite of the intent.
 
 **Fix:** `_fire_bedtime()` skips when the active scene is `Away`, logs that it
@@ -197,7 +200,7 @@ No change is needed to the wake timer — activating Away already cancels it.
 
 ## 7. The away summary
 
-Computed once, at the Away→(Day|Sleeping) transition. Stored in `settings` under
+Computed once, at the Away→(Home|Sleeping) transition. Stored in `settings` under
 `last_away_summary`; served by `GET /api/scenes/last-away-summary`. Same shape of
 machinery as the overnight summary, deliberately **different content**: that one
 is about sleep quality, this one is about whether anything happened in an empty
@@ -323,7 +326,7 @@ differently.
 
 | Scene | Recorded | Shown on the Board | Counted as |
 |---|---|---|---|
-| **Day** | yes | **suppressed** | — |
+| **Home** | yes | **suppressed** | — |
 | **Sleeping** | yes | yes | **awakenings** — times you got out of bed |
 | **Away** | yes | yes | **movement events** — the primary disturbance signal |
 
@@ -331,7 +334,7 @@ differently.
 
 Every sample is stored in every scene. This is the same rule as the CO2
 plausibility band, for a different reason: filtering CO2 hid a *hardware fault*,
-whereas suppressing motion during Day hides nothing broken — but it would make
+whereas suppressing motion during Home hides nothing broken — but it would make
 the stored record silently scene-dependent, so "was anyone in the room at 15:00
 last Tuesday?" could no longer be answered. Suppression is a **presentation**
 decision and belongs at read time.
@@ -340,10 +343,10 @@ There is no storage argument for dropping it either: `hub_node.ino` emits
 `MOTION:` on every report cycle regardless of value (plus immediately on change),
 so the row count is identical whether the PIR is firing or idle.
 
-### Day — suppressed, and visibly so
+### Home — suppressed, and visibly so
 
-While Day is active, the motion widget and the activity log ignore motion
-readings. The widget reads **"Motion — paused (Day)"** rather than showing a
+While Home is active, the motion widget and the activity log ignore motion
+readings. The widget reads **"Motion — paused (Home)"** rather than showing a
 false "no motion", mirroring the existing `Auto paused — ‹scene› scene active`
 wording on auto-mode lighting cards. A control that is off must say so; one that
 silently reports nothing is worse than one that reports noise.
@@ -421,11 +424,11 @@ Steps 1–2 are independently useful and could ship alone.
 - depart → grace → Away; arrive during grace → nothing applied, timer cancelled
 - depart while Sleeping → Away, pending wake cancelled
 - double depart → one timer, `since` unchanged
-- arrive while Day → no-op; arrive while Sleeping → no-op
+- arrive while Home → no-op; arrive while Sleeping → no-op
 - arrive inside the sleep window → Sleeping **with** the schedule's wake_time
-- arrive outside it → Day
+- arrive outside it → Home
 - wrapping sleep window (e.g. `23:00 → 07:00`) on both sides of midnight
-- schedule disabled → always Day
+- schedule disabled → always Home
 - bedtime timer fires while Away → skipped, tomorrow still armed
 - absence under `PRESENCE_SUMMARY_MIN_S` → no summary stored
 - summary window with no motion → `disturbed: false`
