@@ -998,37 +998,22 @@ the answer to "what was left?" months from now.
 | Tailnet | `hub` = `100.103.160.27` (`hub.tailc13935.ts.net`), MagicDNS resolving |
 
 **Done** — §7.1 image · §7.2 first boot + journal cap · §7.3 code + venv · §7.4 serial
-by-id, `dialout` · §7.5 `.env` · §7.7 service (reboot-tested) · §7.8 Tailscale (node
-joined, dashboard verified on the tailnet) · §7.9 *on-card half* of backups.
+by-id, `dialout` · §7.5 `.env` · §7.7 service (reboot-tested) · §7.8 Tailscale · §7.9
+*on-card half* of backups.
+
+**§7.8 in full:** the Pi joined as `hub` with **key expiry disabled**, so it cannot
+silently drop off the tailnet the way a default ~180-day node key would (it would keep
+running perfectly on the LAN while quietly becoming unreachable from everywhere else).
+Mac and iPhone are both on the tailnet too; `http://hub:8000` is verified working from
+the Mac. Note the URL is **`http://`** — there is no TLS by design, and browsers will
+try to upgrade or search a bare `hub:8000`.
 
 Started fresh rather than migrating the Mac's database (§7.6) — the Pi reseeded its
 `devices` rows from `.env` on first run.
 
 **Still outstanding**
 
-1. **Tailscale clients on the Mac and phone** — the Pi itself is fully done: joined
-   as `hub`, MagicDNS resolving, dashboard verified, and **key expiry disabled** so
-   the node cannot silently drop off the tailnet (the default ~180-day expiry would
-   otherwise strand it while it kept running perfectly on the LAN).
-
-   What remains is that **the tailnet has only the Pi on it**, so `hub:8000` resolves
-   from nothing else yet:
-
-   ```bash
-   brew install --cask tailscale     # Mac
-   ```
-
-   Plus the iPhone from the App Store, same account — a hard requirement for §7.10,
-   since the ingest endpoint only resolves over the tailnet.
-
-   Re-check the expiry setting after any re-authentication:
-
-   ```bash
-   ssh louis@192.168.0.188 'sudo tailscale status --json' | grep -i keyexpiry
-   # no match = disabled, which is what you want
-   ```
-
-2. **Off-box backup (§7.9)** — the on-card rolling weekly `.backup` cron is live and
+1. **Off-box backup (§7.9)** — the on-card rolling weekly `.backup` cron is live and
    tested. The second cron line, the one that matters when the card dies, is
    **deliberately not installed yet**: the Mac had Remote Login off, and a nightly
    `scp` that fails looks exactly like a working backup from the Pi's side. To
@@ -1046,13 +1031,15 @@ Started fresh rather than migrating the Mac's database (§7.6) — the Pi reseed
    Then actually look in `~/hub-backups/` on the Mac a few days later — see the
    warning in §7.9.
 
-3. **Health ingest (§7.10)** — nothing configured. Needs the Health Auto Export iOS
-   app pointed at `http://hub:8000/api/health/ingest` (so it needs Tailscale first),
-   with **"aggregate sleep data" off**. No seed data to clear: this Pi's database was
-   created fresh and has zero health rows, so the `seed_health.py --clear` step in
-   §7.10 does not apply here.
+2. **Health ingest (§7.10)** — nothing configured, but no longer blocked: the phone
+   is on the tailnet, so `http://hub:8000/api/health/ingest` resolves from it. Point
+   the Health Auto Export iOS app there with **"aggregate sleep data" off** — the
+   endpoint needs per-stage segments carrying `startDate`/`endDate` and rejects
+   aggregated payloads whole. No seed data to clear: this Pi's database was created
+   fresh and has zero health rows, so §7.10's `seed_health.py --clear` does not apply
+   here (that warning is about the *Mac's* database).
 
-4. **Physical placement (§7.11)** — sensor siting not finalised.
+3. **Physical placement (§7.11)** — sensor siting not finalised.
 
 **Known-broken hardware:** the SCD40 reports `CO2:0` in ambient air. It is
 **defective**, not miscalibrated — `perform_self_test` returns non-zero on 5/5 runs
