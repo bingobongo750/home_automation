@@ -24,7 +24,7 @@ from flask import Flask  # noqa: E402
 from app import db, lighting, planner, poller  # noqa: E402
 from app.api import api  # noqa: E402
 from app.mystrom import make_plug  # noqa: E402
-from app.wled import make_wled_zone  # noqa: E402
+from app.shelly_bulb import make_bulb  # noqa: E402
 
 
 def make_client():
@@ -49,8 +49,8 @@ class PlannerTestCase(unittest.TestCase):
         for device in db.list_devices():
             if device["type"] == "wifi_plug":
                 poller.plugs[device["id"]] = make_plug(device["ip"])
-            elif device["type"] == "wled_zone":
-                lighting.zones[device["id"]] = make_wled_zone(device["ip"])
+            elif device["type"] == "bulb_zone":
+                lighting.zones[device["id"]] = make_bulb(device["ip"])
         cls.client = make_client()
 
     def setUp(self):

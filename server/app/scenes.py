@@ -1,7 +1,7 @@
 """House modes (scenes): Sleeping / Day / Away.
 
 A scene is a named, manually-triggered state that sets several devices at
-once — the myStrom plug(s) via poller.plugs and the WLED zones via
+once — the myStrom plug(s) via poller.plugs and the bulb zones via
 lighting.zones. Definitions live in the `scenes` table (seeded from
 db.SCENE_SEEDS, editable there); states are keyed by the group keys
 "all_plugs"/"all_zones" (every device of that type) and/or device names
@@ -39,7 +39,7 @@ from datetime import datetime, timedelta
 
 from . import db, health, lighting, planner, poller
 from .mystrom import PlugError
-from .wled import WledError
+from .shelly_bulb import BulbError
 
 log = logging.getLogger("scenes")
 
@@ -204,7 +204,7 @@ def _fire_wake(generation: int) -> None:
 
 # Scene state group keys: apply a target to every device of that type —
 # present and future, so "all plugs off" never depends on a name list.
-GROUP_KEYS = {"all_plugs": "wifi_plug", "all_zones": "wled_zone"}
+GROUP_KEYS = {"all_plugs": "wifi_plug", "all_zones": "bulb_zone"}
 
 
 def _resolve_targets(states: dict, devices: dict) -> tuple[dict, list[dict]]:
@@ -248,12 +248,12 @@ def _apply_states(states: dict) -> list[dict]:
             try:
                 if device["type"] == "wifi_plug":
                     results.append(_apply_plug(device, target))
-                elif device["type"] == "wled_zone":
+                elif device["type"] == "bulb_zone":
                     results.append(_apply_zone(device, target))
                 else:
                     results.append({"device": device_name, "ok": False,
                                     "error": f"unsupported device type {device['type']}"})
-            except (PlugError, WledError) as exc:
+            except (PlugError, BulbError) as exc:
                 log.error("Scene could not reach %s: %s", device_name, exc)
                 results.append({"device": device_name, "ok": False, "error": str(exc)})
     return results
@@ -286,7 +286,6 @@ def _apply_zone(device: dict, target: dict) -> dict:
         on=target.get("on"),
         brightness=target.get("brightness"),
         color=target.get("color"),
-        effect=target.get("effect"),
     )
     return {"device": device["name"], "ok": True}
 

@@ -32,10 +32,10 @@ MYSTROM_PLUG_IP = os.environ.get("MYSTROM_PLUG_IP", "192.168.0.51")
 MYSTROM_PLUG2_IP = os.environ.get("MYSTROM_PLUG2_IP", "192.168.0.52")
 MYSTROM_POLL_INTERVAL = float(os.environ.get("MYSTROM_POLL_INTERVAL", "10"))
 
-# WLED zones (ambient lighting) — WiFi devices, same lane as the myStrom
-# plugs above. Placeholder IPs until each zone's ESP32 is physically set up.
-WLED_CUPBOARD_IP = os.environ.get("WLED_CUPBOARD_IP", "192.168.0.61")
-WLED_TABLE_IP = os.environ.get("WLED_TABLE_IP", "192.168.0.62")
+# Shelly bulb zones (ambient lighting) — WiFi devices, same lane as the
+# myStrom plugs above. Placeholder IPs until each bulb is physically set up.
+SHELLY_CUPBOARD_IP = os.environ.get("SHELLY_CUPBOARD_IP", "192.168.0.61")
+SHELLY_ROOM_LED_IP = os.environ.get("SHELLY_ROOM_LED_IP", "192.168.0.62")
 
 # Auto-lighting job: how often it re-checks lux and pushes brightness, the
 # lux level below which a zone in 'auto' mode is considered "dark", and the

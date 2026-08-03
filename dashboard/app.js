@@ -86,7 +86,7 @@ function applyAlert(widget, state) {
 
 /* ------------------------------------------------------- scenes (house modes)
    Three named modes — Sleeping / Day / Away — switched from the header, each
-   setting the plug + WLED zones in one shot (see /api/scenes). While a scene
+   setting the plug + bulb zones in one shot (see /api/scenes). While a scene
    other than Day is active the backend pauses auto lighting; the lighting
    cards say so. Sleeping opens a dialog with an optional wake time (a
    scheduled scene change back to Day — not an alarm). */
@@ -364,12 +364,14 @@ function renderPlugs(devices) {
 }
 
 /* -------------------------------------------------------------- lighting
-   One .light-card per wled_zone device. The top-right switch is always the
-   zone's physical on/off; Mode (manual/auto) lives in the control rows with
-   brightness/color/effect. In 'auto' mode the lighting job (app/lighting.py)
-   drives on/brightness from lux, so those two controls go read-only and
-   just keep reflecting the live value each poll — they aren't hidden, since
-   color/effect stay user-editable in either mode. */
+   One .light-card per bulb_zone device (a Shelly Multicolor Bulb E27 Gen3).
+   The top-right switch is always the zone's physical on/off; Mode
+   (manual/auto) lives in the control rows with brightness/color. In 'auto'
+   mode the lighting job (app/lighting.py) drives on/brightness from lux, so
+   brightness goes read-only and just keeps reflecting the live value each
+   poll — it isn't hidden, since color stays user-editable in either mode.
+   Brightness is 0-255 here and everywhere else in the hub; the bulb's
+   1-100 % scale is converted server-side in app/shelly_bulb.py. */
 
 const lightCards = new Map(); // device id -> .light-card element
 const WARMTH_DEFAULT_K = 2700; // typical warm-white home bulb
@@ -443,17 +445,6 @@ function lightCardDOM(device) {
       <label class="light-field light-rgb-field" hidden>
         <span class="light-field-label"></span>
         <input type="color" class="light-color" disabled>
-      </label>
-      <label class="light-field">
-        <span class="light-field-label">Effect</span>
-        <select class="light-effect" disabled>
-          <option value="0">Solid</option>
-          <option value="1">Blink</option>
-          <option value="2">Breathe</option>
-          <option value="3">Wipe</option>
-          <option value="8">Colorloop</option>
-          <option value="9">Rainbow</option>
-        </select>
       </label>
     </div>
     <p class="card-note light-status"></p>`;
@@ -552,17 +543,6 @@ function lightCardDOM(device) {
     }
   });
 
-  const effect = card.querySelector(".light-effect");
-  effect.addEventListener("change", async () => {
-    try {
-      applyLightState(card, await postJSON(`/api/devices/${device.id}/state`,
-        { effect: Number(effect.value) }));
-      status.textContent = "";
-    } catch {
-      status.textContent = "Couldn't reach the zone.";
-    }
-  });
-
   return card;
 }
 
@@ -596,7 +576,6 @@ function applyLightState(card, state) {
     card.querySelector(".light-color").value = rgbToHex(state.color);
     card.querySelector(".light-color-swatch").style.background = rgbToHex(state.color);
   }
-  if (state.effect !== undefined) card.querySelector(".light-effect").value = String(state.effect);
 }
 
 function renderLighting(devices, latest) {
@@ -604,7 +583,7 @@ function renderLighting(devices, latest) {
   const empty = document.getElementById("lighting-empty");
   const lux = latest && latest.lux;
   for (const device of devices) {
-    if (device.type !== "wled_zone") continue;
+    if (device.type !== "bulb_zone") continue;
     if (empty) empty.remove();
     let card = lightCards.get(device.id);
     if (!card) {
@@ -622,7 +601,6 @@ function renderLighting(devices, latest) {
     const color = card.querySelector(".light-color");
     const warmth = card.querySelector(".light-warmth");
     const colorModeBtns = card.querySelectorAll(".color-mode-btn");
-    const effect = card.querySelector(".light-effect");
 
     if (device.light) {
       // brightness (and on/off) keep reflecting the live value every poll,
@@ -631,7 +609,6 @@ function renderLighting(devices, latest) {
       color.disabled = false;
       warmth.disabled = false;
       colorModeBtns.forEach((b) => { b.disabled = false; });
-      effect.disabled = false;
       const suppressedBy = activeScene && activeScene.name !== "Day" ? activeScene.name : null;
       status.textContent = !isAuto
         ? ""
@@ -642,7 +619,6 @@ function renderLighting(devices, latest) {
       color.disabled = true;
       warmth.disabled = true;
       colorModeBtns.forEach((b) => { b.disabled = true; });
-      effect.disabled = true;
       status.textContent = "Zone unreachable — is it powered and on the network?";
     }
   }

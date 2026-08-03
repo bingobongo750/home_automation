@@ -12,7 +12,7 @@ writer-at-a-time from blocking each other.
 Tables
 ------
 readings        sensor time series from the Arduino (metric = temp/hum/lux/co2/motion)
-devices         generic device registry (wifi_plug and wled_zone rows so far)
+devices         generic device registry (wifi_plug and bulb_zone rows so far)
 power_readings  plug power/state time series, keyed to devices.id
 scenes          house modes (Sleeping/Day/Away): per-device target states as JSON
 
@@ -39,10 +39,11 @@ CREATE INDEX IF NOT EXISTS idx_readings_metric_ts ON readings (metric, ts);
 CREATE TABLE IF NOT EXISTS devices (
     id     INTEGER PRIMARY KEY,
     name   TEXT NOT NULL,
-    type   TEXT NOT NULL,           -- wifi_plug | wled_zone
+    type   TEXT NOT NULL,           -- wifi_plug | bulb_zone
     ip     TEXT,
-    room   TEXT,
-    mode   TEXT,                    -- wled_zone only: manual | auto
+    room   TEXT,                    -- the hub covers a single room, so this is
+                                    -- seeded empty; kept for a future multi-room hub
+    mode   TEXT,                    -- bulb_zone only: manual | auto
     locked INTEGER NOT NULL DEFAULT 0  -- wifi_plug only: 1 blocks power-off without confirmation
 );
 
@@ -87,16 +88,18 @@ def connect() -> sqlite3.Connection:
 
 # Seeded so the API works before physical provisioning. More plugs: add a
 # row here (and an IP in .env) — the poller and dashboard pick them up.
+# Every device lives in the one room this hub covers, so `room` is seeded
+# empty and the dashboard shows the device name alone.
 PLUG_SEEDS = [
-    ("Plug 1", config.MYSTROM_PLUG_IP, "Living Room"),
-    ("Plug 2", config.MYSTROM_PLUG2_IP, "Unassigned"),
+    ("Plug 1", config.MYSTROM_PLUG_IP, ""),
+    ("Plug 2", config.MYSTROM_PLUG2_IP, ""),
 ]
 
-# Same idea for WLED lighting zones. More zones: add a row here (and an IP
-# in .env) — the auto-lighting job and dashboard pick them up.
-WLED_SEEDS = [
-    ("Cupboard", config.WLED_CUPBOARD_IP, "Kitchen"),
-    ("Table", config.WLED_TABLE_IP, "Living Room"),
+# Same idea for Shelly bulb lighting zones. More zones: add a row here (and
+# an IP in .env) — the auto-lighting job and dashboard pick them up.
+BULB_SEEDS = [
+    ("Cupboard", config.SHELLY_CUPBOARD_IP, ""),
+    ("Room LED", config.SHELLY_ROOM_LED_IP, ""),
 ]
 
 # Default house-mode scenes (see app/scenes.py). States are keyed either by
@@ -125,7 +128,9 @@ SCENE_SEEDS = {
 
 # Earlier seed revisions (night-light Sleeping, then per-name device lists).
 # init_db swaps a stored row that still exactly matches any of these for the
-# current SCENE_SEEDS entry — a hand-edited row is left alone.
+# current SCENE_SEEDS entry — a hand-edited row is left alone. These keep the
+# pre-rename "Table" name on purpose: they're matched against what an older DB
+# actually stored, not against the current seeds.
 _LEGACY_SCENE_STATES = {
     "Sleeping": [
         {"Plug 1": {"on": False},
@@ -154,6 +159,17 @@ def init_db() -> None:
             conn.execute("ALTER TABLE devices ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
         # legacy name from the first schema revision
         conn.execute("UPDATE devices SET name = 'Plug 1' WHERE name = 'myStrom Plug'")
+        # legacy type from when the zones were WLED strips on ESP32s, before
+        # the switch to self-contained Shelly bulbs (MANUAL.md 5.4)
+        conn.execute("UPDATE devices SET type = 'bulb_zone' WHERE type = 'wled_zone'")
+        # the second bulb zone is a room LED, not a table lamp; rename before
+        # the seed loop below so it matches by name instead of inserting a twin
+        conn.execute("UPDATE devices SET name = 'Room LED' WHERE name = 'Table'")
+        # single-room hub: the seeded room labels carried no information. Only
+        # rows still on a seeded value are cleared, so a hand-set room survives.
+        conn.execute(
+            "UPDATE devices SET room = '' WHERE room IN ('Living Room', 'Kitchen', 'Unassigned')"
+        )
         for name, ip, room in PLUG_SEEDS:
             exists = conn.execute(
                 "SELECT 1 FROM devices WHERE name = ?", (name,)
@@ -163,14 +179,14 @@ def init_db() -> None:
                     "INSERT INTO devices (name, type, ip, room) VALUES (?, 'wifi_plug', ?, ?)",
                     (name, ip, room),
                 )
-        for name, ip, room in WLED_SEEDS:
+        for name, ip, room in BULB_SEEDS:
             exists = conn.execute(
                 "SELECT 1 FROM devices WHERE name = ?", (name,)
             ).fetchone()
             if exists is None:
                 conn.execute(
                     """INSERT INTO devices (name, type, ip, room, mode)
-                       VALUES (?, 'wled_zone', ?, ?, 'manual')""",
+                       VALUES (?, 'bulb_zone', ?, ?, 'manual')""",
                     (name, ip, room),
                 )
         for name, states in SCENE_SEEDS.items():
@@ -191,6 +207,17 @@ def init_db() -> None:
                 conn.execute(
                     "UPDATE scenes SET states = ? WHERE name = ?",
                     (json.dumps(SCENE_SEEDS[name]), name),
+                )
+        # Scenes key device targets by name, so a hand-edited row naming the
+        # old "Table" zone would silently stop matching after the rename above.
+        # Runs last, so the legacy-revision match sees the pre-rename JSON.
+        for row in conn.execute("SELECT id, states FROM scenes").fetchall():
+            states = json.loads(row["states"])
+            if "Table" in states:
+                states["Room LED"] = states.pop("Table")
+                conn.execute(
+                    "UPDATE scenes SET states = ? WHERE id = ?",
+                    (json.dumps(states), row["id"]),
                 )
 
 
@@ -461,7 +488,7 @@ def get_device(device_id: int) -> dict | None:
 
 
 def set_device_mode(device_id: int, mode: str) -> None:
-    """wled_zone only: 'manual' (dashboard controls it) or 'auto' (the
+    """bulb_zone only: 'manual' (dashboard controls it) or 'auto' (the
     lighting job drives brightness from lux)."""
     with connect() as conn:
         conn.execute("UPDATE devices SET mode = ? WHERE id = ?", (mode, device_id))

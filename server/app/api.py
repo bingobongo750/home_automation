@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 
 from . import db, lighting, poller, scenes, serial_reader
 from .mystrom import PlugError
-from .wled import WledError
+from .shelly_bulb import BulbError
 
 log = logging.getLogger("api")
 
@@ -120,32 +120,32 @@ def motion_events():
     return jsonify({"events": db.motion_events(since), "count": db.motion_count(since)})
 
 
-def _wled_state_or_none(device_id: int) -> dict | None:
-    """Live read of a WLED zone's state — WLED zones aren't polled onto a
-    schedule (there's no history chart for them yet), so this hits the zone
+def _bulb_state_or_none(device_id: int) -> dict | None:
+    """Live read of a bulb zone's state — bulb zones aren't polled onto a
+    schedule (there's no history chart for them yet), so this hits the bulb
     directly on each /devices call."""
     zone = lighting.zones.get(device_id)
     if zone is None:
         return None
     try:
         return zone.state()
-    except WledError as exc:
-        log.warning("WLED state fetch failed for device %d: %s", device_id, exc)
+    except BulbError as exc:
+        log.warning("Bulb state fetch failed for device %d: %s", device_id, exc)
         return None
 
 
 def _attach_device_state(device: dict) -> dict:
     if device["type"] == "wifi_plug":
         device["power"] = db.latest_power(device["id"])
-    elif device["type"] == "wled_zone":
-        device["light"] = _wled_state_or_none(device["id"])
+    elif device["type"] == "bulb_zone":
+        device["light"] = _bulb_state_or_none(device["id"])
     return device
 
 
 @api.get("/devices")
 def devices():
     """Device list, each row including its last polled power sample (plugs)
-    or live state (WLED zones) — one call refreshes every widget/card."""
+    or live state (bulb zones) — one call refreshes every widget/card."""
     return jsonify([_attach_device_state(d) for d in db.list_devices()])
 
 
@@ -222,13 +222,15 @@ def device_power_history(device_id: int):
 
 @api.post("/devices/<int:device_id>/state")
 def device_state(device_id: int):
-    """Set a WLED zone's brightness/color/effect/on-off. Body: any subset of
-    {"on": bool, "brightness": 0-255, "color": [r, g, b], "effect": int}.
-    Only meaningful in 'manual' mode — in 'auto' mode the lighting job will
-    overwrite brightness/on on its next tick."""
+    """Set a bulb zone's brightness/color/on-off. Body: any subset of
+    {"on": bool, "brightness": 0-255, "color": [r, g, b]}. Brightness stays
+    0-255 across the whole hub — the Shelly's 1-100 % scale is converted
+    inside app/shelly_bulb.py and nowhere else. Only meaningful in 'manual'
+    mode — in 'auto' mode the lighting job will overwrite brightness/on on
+    its next tick."""
     device = db.get_device(device_id)
-    if device is None or device["type"] != "wled_zone":
-        return jsonify({"error": "no such WLED zone"}), 404
+    if device is None or device["type"] != "bulb_zone":
+        return jsonify({"error": "no such bulb zone"}), 404
     zone = lighting.zones.get(device_id)
     if zone is None:
         return jsonify({"error": "zone not configured"}), 404
@@ -247,31 +249,27 @@ def device_state(device_id: int):
     on = body.get("on")
     if on is not None and not isinstance(on, bool):
         return jsonify({"error": "on must be a boolean"}), 400
-    effect = body.get("effect")
-    if effect is not None and (not isinstance(effect, int) or isinstance(effect, bool)):
-        return jsonify({"error": "effect must be an integer"}), 400
 
     try:
         state = zone.set_state(
             on=on,
             brightness=int(brightness) if brightness is not None else None,
             color=[int(c) for c in color] if color is not None else None,
-            effect=effect,
         )
-    except WledError as exc:
-        log.error("WLED set_state failed for device %d: %s", device_id, exc)
+    except BulbError as exc:
+        log.error("Bulb set_state failed for device %d: %s", device_id, exc)
         return jsonify({"error": str(exc)}), 502
     return jsonify(state)
 
 
 @api.post("/devices/<int:device_id>/mode")
 def device_mode(device_id: int):
-    """Set a WLED zone's mode. Body: {"mode": "manual" | "auto"}. In 'auto'
+    """Set a bulb zone's mode. Body: {"mode": "manual" | "auto"}. In 'auto'
     the lighting job (see app/lighting.py) drives brightness from the
     latest BH1750 lux reading instead of the dashboard."""
     device = db.get_device(device_id)
-    if device is None or device["type"] != "wled_zone":
-        return jsonify({"error": "no such WLED zone"}), 404
+    if device is None or device["type"] != "bulb_zone":
+        return jsonify({"error": "no such bulb zone"}), 404
     mode = (request.get_json(silent=True) or {}).get("mode")
     if mode not in ("manual", "auto"):
         return jsonify({"error": "mode must be 'manual' or 'auto'"}), 400

@@ -26,13 +26,14 @@ unix epoch seconds (UTC); the dashboard formats them client-side.
 ## Devices
 
 Two device types exist so far, both WiFi (never routed through the
-Arduino/serial lane): `wifi_plug` (myStrom) and `wled_zone` (ambient
-lighting, stock WLED firmware on an ESP32 — see "Lighting" below).
+Arduino/serial lane): `wifi_plug` (myStrom) and `bulb_zone` (ambient
+lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
 
-- `GET /devices` → array of `{id, name, type, ip, room, ...}`. `wifi_plug`
+- `GET /devices` → array of `{id, name, type, ip, room, ...}`. `room` is seeded
+  empty (single-room hub) and kept for a future multi-room one. `wifi_plug`
   rows include `"power"` (last polled `{ts, watts, relay_on}`, or `null`).
-  `wled_zone` rows include `"mode"` (`"manual"|"auto"`) and `"light"` (live
-  `{on, brightness, color, effect}`, or `null` if the zone is unreachable).
+  `bulb_zone` rows include `"mode"` (`"manual"|"auto"`) and `"light"` (live
+  `{on, brightness, color}`, or `null` if the zone is unreachable).
   One call refreshes every plug widget and lighting card.
 - `GET /devices/:id` → same per-type shape as one row above.
 - `POST /devices/:id/toggle` → *wifi_plug only.* `{"relay_on": true|false}`
@@ -45,16 +46,22 @@ lighting, stock WLED firmware on an ESP32 — see "Lighting" below).
   integrated over the hours actually covered by samples, so it's an
   estimate (≈) rather than metered energy.
 
-## Lighting (WLED zones)
+## Lighting (bulb zones)
 
-- `POST /devices/:id/state` → *wled_zone only.* Body: any subset of
-  `{"on": bool, "brightness": 0-255, "color": [r, g, b], "effect": <int>}`.
+- `POST /devices/:id/state` → *bulb_zone only.* Body: any subset of
+  `{"on": bool, "brightness": 0-255, "color": [r, g, b]}`.
   Pushes a partial update to the zone and returns its resulting
-  `{on, brightness, color, effect}`. `400` on out-of-range values, `502` if
+  `{on, brightness, color}`. `400` on out-of-range values, `502` if
   the zone is unreachable. Only meaningful in `manual` mode — in `auto`
   mode the lighting job (see below) overwrites `on`/`brightness` on its
   next tick.
-- `POST /devices/:id/mode` → *wled_zone only.* Body: `{"mode": "manual"|"auto"}`.
+
+  Brightness is **0-255 across the whole hub**. The Shelly bulb's own scale
+  is 1-100 %; that conversion happens inside `app/shelly_bulb.py` and
+  nowhere else, so nothing above the client ever sees percent. There is no
+  `effect` field — the bulb has no effect engine (the numbered effects in
+  the API before the Shelly migration were a WLED feature).
+- `POST /devices/:id/mode` → *bulb_zone only.* Body: `{"mode": "manual"|"auto"}`.
   In `auto` mode, a background job (independent of sensor ingestion and
   plug polling — see `app/lighting.py`) reads the latest BH1750 `lux`
   reading every `LIGHTING_POLL_INTERVAL` seconds and pushes brightness to
@@ -275,7 +282,7 @@ stage `stages` (for the hypnogram), and the night's `subjective` rating:
 - `POST /arduino/command`, body `{"command": "RELAY1:ON"}` — writes one raw
   protocol line to the Arduino (see `serial-protocol.md`). `502` if the
   serial port isn't connected. Exists for any future wired actuator (relay,
-  MOSFET dimmer) and manual testing. Ambient lighting (WLED zones, above)
+  MOSFET dimmer) and manual testing. Ambient lighting (bulb zones, above)
   does **not** use this — it's a WiFi device controlled directly, same lane
   as the myStrom plugs.
 

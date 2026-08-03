@@ -14,26 +14,30 @@ done. Nothing below blocks software work.
 4. Sanity check from the Mac: `curl http://<plug-ip>/report` should return
    JSON with `power` and `relay` fields.
 
-## WLED zone provisioning (per lighting zone)
+## Bulb zone provisioning (per lighting zone)
 
-The software (backend, mock zones, dashboard cards) is complete and runs
-against `MOCK_HARDWARE=1`. Per zone (e.g. "Cupboard", "Table"), when the
+The software (backend, mock bulbs, dashboard cards) is complete and runs
+against `MOCK_HARDWARE=1`. Per zone (e.g. "Cupboard", "Room LED"), when the
 hardware is at hand:
 
-1. Wire the WS2812B/addressable strip's data line to an ESP32 dev board
-   (a level shifter to 5V logic is recommended for longer runs), then flash
-   it with stock [WLED](https://kno.wled.ge) — no custom firmware needed.
-2. Provision the ESP32 onto the home WiFi via WLED's captive portal (only
+1. Screw a **Shelly Multicolor Bulb E27 Gen3** into the zone's E27 fixture.
+   The bulb is the entire device — no controller, no strip, no soldering.
+   The fixture's wall switch has to stay ON permanently; cutting mains makes
+   the bulb unreachable.
+2. Provision the bulb onto the home WiFi via the Shelly Smart Control app,
+   or app-free by joining its AP and opening `http://192.168.33.1` (only
    time any app/portal is touched — runtime control is local-only, same as
-   the myStrom plug).
+   the myStrom plug). Cloud can stay disabled.
 3. On the router, give it a **static DHCP reservation**.
-4. Put that IP in `.env` as `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` (or add a
-   new `WLED_<ZONE>_IP` + a row in `WLED_SEEDS` in `app/db.py` for a third
-   zone), and update the seeded device row if it differs
+4. Put that IP in `.env` as `SHELLY_CUPBOARD_IP` / `SHELLY_ROOM_LED_IP` (or add
+   a new `SHELLY_<ZONE>_IP` + a row in `BULB_SEEDS` in `app/db.py` for a
+   third zone), and update the seeded device row if it differs
    (`UPDATE devices SET ip = '...' WHERE name = 'Cupboard';` — or delete the
    DB and let it reseed from `.env`).
-5. Sanity check from the Mac: `curl http://<zone-ip>/json/state` should
-   return JSON with `on`, `bri`, and `seg` fields.
+5. Sanity check from the Mac:
+   `curl "http://<zone-ip>/rpc/RGBCCT.GetStatus?id=0"` should return JSON
+   with `output`, `brightness`, and `rgb` fields. Note it's `RGBCCT.*`, not
+   the `Light.*` methods used by simpler Shelly dimmers.
 6. If a zone is meant to auto-dim with ambient light, set its mode to
    `auto` from the dashboard's Lighting card (or
    `POST /api/devices/:id/mode {"mode": "auto"}`) once the BH1750 is

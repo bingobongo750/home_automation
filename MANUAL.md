@@ -11,15 +11,15 @@ assumes the design decisions there are settled.
 
 ## ⚠ Read this before you touch the lighting
 
-**The code does not speak Shelly yet.** `CLAUDE.md` describes Shelly Multicolor
-Bulb E27 Gen3 zones, but that decision was documented ahead of the implementation.
-The backend, dashboard, database, and tests still target **WLED** (`app/wled.py`,
-device type `wled_zone`, `WLED_*_IP` env vars). The bulbs will provision onto WiFi
-and answer `curl` fine, but the hub cannot drive them until the migration in
-[§5.4](#54-the-shelly-migration-still-to-do) is done.
+**The code speaks Shelly** — backend, dashboard, database, and tests all target the
+Shelly Multicolor Bulb E27 Gen3 (`app/shelly_bulb.py`, device type `bulb_zone`,
+`SHELLY_*_IP` env vars). The WLED implementation that preceded it is gone; see
+[§5.4](#54-the-shelly-migration-done) for what changed and why.
 
-Everything else — sensors, both plugs, scenes, planner, health — is complete and
-tested. Plan the lighting zone as the last thing you commission.
+Everything is complete and tested against `MOCK_HARDWARE=1`; what remains for the
+lighting zones is physical — screw each bulb in, provision it onto WiFi, reserve its
+IP, and point the device row at it. Plan the lighting zone as the last thing you
+commission.
 
 ---
 
@@ -138,7 +138,7 @@ Database ready at .../data/home.db
 Running with MOCK_HARDWARE=1 — all hardware is simulated
 MOCK_HARDWARE=1: generating fake sensor data (no serial port)
 Polling 2 wifi plug(s) every 10.0s
-Auto-lighting job covering 2 WLED zone(s), checking every 30.0s
+Auto-lighting job covering 2 bulb zone(s), checking every 30.0s
 ```
 
 **What you should see in the browser:** the Board view with four room-condition
@@ -451,11 +451,12 @@ respond.
 
 ### 4.5 Naming, rooms, and locking
 
-The seeds are `Plug 1` (Living Room) and `Plug 2` (Unassigned). Rename to match
-reality:
+The seeds are `Plug 1` and `Plug 2`. The `room` column is seeded empty — this hub
+covers a single room, so a room label would carry no information — but it is still
+there for a future multi-room hub. Rename to match reality:
 
 ```bash
-sqlite3 data/home.db "UPDATE devices SET name='Desk Lamp', room='Study' WHERE name='Plug 2';"
+sqlite3 data/home.db "UPDATE devices SET name='Desk Lamp' WHERE name='Plug 2';"
 ```
 
 Scene targets keyed by device *name* reference these strings — if you rename a plug
@@ -492,7 +493,8 @@ as offline. If the fixture has an accessible switch, tape it or use a fixture wi
    five times in a row; the bulb returns to AP mode.
 
 Give each bulb a **static DHCP reservation**, same as the plugs. Suggested
-`192.168.0.61` (Cupboard) and `192.168.0.62` (Table).
+`192.168.0.61` (Cupboard — the bulb in the cupboard) and `192.168.0.62`
+(Room LED — the room's ambient bulb).
 
 Cloud can be left disabled — nothing at runtime needs it.
 
@@ -541,48 +543,92 @@ If you set a device password in the Shelly web UI, RPC then requires digest auth
 leave it unset on a Tailscale-only LAN, or the client gains a dependency it does not
 currently have.
 
-### 5.4 The Shelly migration (still to do)
+### 5.4 The Shelly migration (done)
 
-Once both bulbs answer `curl`, the remaining work is on the hub side. The codebase
-targets WLED end to end; nothing will drive a Shelly bulb until this is done.
+The hub used to target WLED end to end. It now speaks Shelly — `app/shelly_bulb.py`
+replaced `app/wled.py`, and the device type is `bulb_zone` rather than `wled_zone`.
+Nothing is left to do here; this section records how it was settled.
 
-The two substantive design decisions:
+The two substantive decisions:
 
 - **Brightness scale.** The hub is 0–255 everywhere (`LIGHTING_AUTO_BRIGHTNESS=180`,
   the dashboard slider `min="0" max="255"`, `api.py` validation, scene seeds). Shelly
-  is 1–100 %. Convert **inside the client** — `pct = max(1, round(b / 255 * 100))`
-  outbound, `b255 = round(pct * 255 / 100)` inbound — and every other layer stays
-  unchanged. Do not renumber the hub.
-- **Effects.** WLED has numbered effects (`fx`); the Shelly bulb has no equivalent.
-  Drop the effect control from the lighting card, or repurpose it as the `rgb`/`cct`
-  mode toggle. Note `CLAUDE.md` contradicts itself here — the bulb-integration
-  section describes the client as `on`/`brightness`/`color`, while the API list still
-  carries `effect` on `POST /api/devices/:id/state`. Settle it in the same commit.
+  is 1–100 %. The conversion lives **inside the client** — `_to_pct()` outbound,
+  `_to_255()` inbound — and every other layer was left speaking 0–255. A hub
+  brightness of 0 floors to 1 %, since Shelly rejects 0 and "off" is the `on` field's
+  job. Covered by `server/tests/test_shelly_bulb.py`.
+- **Effects.** WLED had numbered effects (`fx`); the Shelly bulb has no equivalent, so
+  the effect control was **dropped** — from the lighting card, from
+  `POST /api/devices/:id/state`, and from `_apply_zone` in `scenes.py`. `CLAUDE.md`
+  used to contradict itself on this (the bulb section said `on`/`brightness`/`color`
+  while the API list still carried `effect`); it now says `on`/`brightness`/`color`
+  in both places. The bulb's `rgb`/`cct` mode was **not** surfaced as a replacement
+  control — the client forces `mode: "rgb"` whenever it pushes a color, because a
+  bulb sitting in `cct` ignores `rgb` outright and the color silently does nothing.
 
-Files to change:
+What changed:
 
 | File | Change |
 |---|---|
-| `server/app/shelly_bulb.py` | **new** — replaces `wled.py`. `state()` / `set_state()` over `RGBCCT.*`, plus `MockShellyBulb` for `MOCK_HARDWARE=1` and a `BulbError` |
-| `server/app/wled.py` | delete once the above lands |
-| `server/app/config.py` | `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` → `SHELLY_CUPBOARD_IP` / `SHELLY_TABLE_IP` |
-| `server/app/db.py` | `WLED_SEEDS` → `BULB_SEEDS`; type `'wled_zone'` → `'bulb_zone'`; add a one-time migration `UPDATE devices SET type='bulb_zone' WHERE type='wled_zone'` |
-| `server/app/lighting.py` | import, type filter, `WledError` → `BulbError` |
-| `server/app/api.py` | `_wled_state_or_none`, `_attach_device_state`, `device_state`, `device_mode` — type checks and error strings |
-| `server/app/scenes.py` | `_apply_zone` (drop the `effect` argument) |
-| `dashboard/app.js` | type strings at lines ~341 and ~607; effect control |
-| `dashboard/index.html` | lighting card markup if the effect control goes |
-| `.env.example` | rename the two IP vars |
-| `server/tests/test_scenes.py`, `test_planner.py` | `wled_zone` references |
-| `docs/api.md`, `docs/physical-setup.md`, `server/README.md` | wording |
+| `server/app/shelly_bulb.py` | **new** — `state()` / `set_state()` over `RGBCCT.*` JSON-RPC, the brightness conversion, `MockShellyBulb` for `MOCK_HARDWARE=1`, `BulbError` |
+| `server/app/wled.py` | deleted |
+| `server/app/config.py` | `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` → `SHELLY_CUPBOARD_IP` / `SHELLY_TABLE_IP` (the latter since renamed again — see §5.5) |
+| `server/app/db.py` | `WLED_SEEDS` → `BULB_SEEDS`; type `'wled_zone'` → `'bulb_zone'`; one-time migration `UPDATE devices SET type='bulb_zone' WHERE type='wled_zone'` at startup |
+| `server/app/lighting.py` | import, type filter, `WledError` → `BulbError`, log strings |
+| `server/app/api.py` | `_bulb_state_or_none`, `_attach_device_state`, `device_state`, `device_mode` — type checks, error strings, `effect` validation gone |
+| `server/app/scenes.py` | `GROUP_KEYS`, `_apply_states` type check, `_apply_zone` (no `effect`) |
+| `dashboard/app.js`, `index.html`, `styles.css` | type strings; effect `<select>`, its handler and its CSS removed |
+| `.env.example` | the two IP vars renamed |
+| `server/tests/` | `test_shelly_bulb.py` **new** (conversion + RPC shape); `wled_zone` references updated in `test_scenes.py` / `test_planner.py` |
+| `docs/api.md`, `docs/physical-setup.md`, `server/README.md`, `CLAUDE.md` | wording |
 
-Keep `MOCK_HARDWARE=1` working throughout — the test suite depends on it, and it is
-how you verify the migration without unscrewing a bulb.
+> **Existing databases migrate themselves.** `init_db()` rewrites any leftover
+> `wled_zone` row to `bulb_zone` at startup, so a DB seeded before the migration keeps
+> its zones (and their `mode` column) instead of silently dropping off the dashboard.
+> A Pi whose `.env` still carries `WLED_CUPBOARD_IP` / `WLED_TABLE_IP`, though, will
+> **not** warn — those names are simply no longer read, and the seeds fall back to
+> their defaults. Rename them in `.env` when you deploy this (§8.2).
+
+`MOCK_HARDWARE=1` works throughout — it is how the migration was verified without a
+bulb screwed in, and the whole suite still runs under it.
 
 After the migration, set a zone's mode to `auto` from its lighting card (or
 `POST /api/devices/:id/mode {"mode":"auto"}`) to hand its brightness to the
 lux-driven job. Tune with `LIGHTING_LUX_THRESHOLD` (default 50 lux) and
 `LIGHTING_AUTO_BRIGHTNESS` (default 180/255 ≈ 70 %).
+
+### 5.5 Zone names and the empty `room` column (done)
+
+Two labelling fixes, no behavior change:
+
+- The second bulb zone was seeded **`Table`**; it is a room LED, so it is now
+  **`Room LED`**, and its env var is **`SHELLY_ROOM_LED_IP`** (was
+  `SHELLY_TABLE_IP`). The first zone keeps its name — **`Cupboard`** is the bulb
+  in the cupboard.
+- The seeded `room` labels (`Living Room`, `Kitchen`, `Unassigned`) are now
+  **empty**. This hub covers one room, so the label was noise under every device
+  name on the board. The `room` column stays in the schema and in
+  `GET /api/devices` for a future multi-room hub — the dashboard simply shows the
+  device name alone when it's blank.
+
+| File | Change |
+|---|---|
+| `server/app/config.py`, `.env.example` | `SHELLY_TABLE_IP` → `SHELLY_ROOM_LED_IP` |
+| `server/app/db.py` | `BULB_SEEDS` name `Table` → `Room LED`; all four seeds' `room` → `""`; three startup migrations (below) |
+| `server/tests/test_scenes.py` | zone name in the scene assertions |
+| `MANUAL.md`, `CLAUDE.md`, `docs/physical-setup.md`, `server/README.md` | wording |
+
+> **Existing databases migrate themselves**, in `init_db()`: a stored `Table` row
+> is renamed in place (its `ip` and `mode` survive, and the seed loop then matches
+> it by name instead of inserting a twin); rooms still holding a seeded value are
+> blanked, so a room you set by hand is left alone; and a `Table` key inside any
+> scene's `states` JSON is rewritten to `Room LED`, since scene targets keyed by
+> device name would otherwise silently stop matching.
+>
+> Rename `SHELLY_TABLE_IP` → `SHELLY_ROOM_LED_IP` in the Pi's `.env` when you
+> deploy this (§8.2). Nothing breaks if you forget — those vars seed the `devices`
+> row only on first insert, and the poller and lighting job read the IP from the
+> DB — but the file then documents a variable nothing reads.
 
 ---
 
@@ -733,9 +779,9 @@ MYSTROM_PLUG_IP=192.168.0.51
 MYSTROM_PLUG2_IP=192.168.0.52
 MYSTROM_POLL_INTERVAL=10
 
-# rename these two once §5.4 is done
-WLED_CUPBOARD_IP=192.168.0.61
-WLED_TABLE_IP=192.168.0.62
+# current names — §5.4 renamed these off WLED_*, §5.5 renamed the second zone
+SHELLY_CUPBOARD_IP=192.168.0.61
+SHELLY_ROOM_LED_IP=192.168.0.62
 
 LIGHTING_POLL_INTERVAL=30
 LIGHTING_LUX_THRESHOLD=50
@@ -1032,7 +1078,7 @@ Return to the tip with `git checkout main`.
 | `PLUG UNREACHABLE` | Wrong IP, or DHCP moved it | `curl http://<ip>/report`; add a static reservation; **update the DB row**, not just `.env` |
 | Changed an IP in `.env`, nothing happened | Seeds are insert-if-missing | `UPDATE devices SET ip=…` and restart (§4.4) |
 | Plug ignores a scene | It is locked | By design — `UPDATE devices SET locked=0` if you meant otherwise |
-| `WLED ZONE UNREACHABLE` | Expected until §5.4 is done | The seeded zone IPs are placeholders |
+| `BULB ZONE UNREACHABLE` | Expected until the bulbs are installed | The seeded zone IPs are placeholders — provision the bulb (§5.2) and update the DB row |
 | Bulb offline | Its fixture's wall switch is off | The bulb needs permanent mains |
 | Auto-lighting oscillates | BH1750 sees the light it controls | Move the sensor; widen `LIGHTING_LUX_THRESHOLD` |
 | Auto-lighting does nothing | A non-Day scene is active, or the zone is `manual` | By design — the card reads "Auto paused"; switch to Day |
@@ -1057,7 +1103,7 @@ bring-up:
 | `DB_PATH` | `./data/home.db` | On the Pi, anywhere on the card — the default is fine |
 | `MYSTROM_PLUG_IP` / `_PLUG2_IP` | `192.168.0.51` / `.52` | Seeds only — see §4.4 |
 | `MYSTROM_POLL_INTERVAL` | `10` (s) | Plug state + power sampling |
-| `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` | `192.168.0.61` / `.62` | Rename to `SHELLY_*` in §5.4 |
+| `SHELLY_CUPBOARD_IP` / `SHELLY_ROOM_LED_IP` | `192.168.0.61` / `.62` | Seeds only — see §5.4, §5.5 |
 | `LIGHTING_POLL_INTERVAL` | `30` (s) | Auto-lighting tick |
 | `LIGHTING_LUX_THRESHOLD` | `50` (lux) | Below this counts as dark |
 | `LIGHTING_AUTO_BRIGHTNESS` | `180` (0–255) | Applied when dark |

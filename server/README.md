@@ -26,15 +26,15 @@ MOCK_HARDWARE=1 python run.py
 
 This fakes all three lanes — plausible drifting sensor readings on the
 firmware's 5s cadence, a simulated plug (toggleable, ~60W when on), and
-simulated WLED zones (toggleable, brightness/color/effect held in memory) —
+simulated Shelly bulb zones (toggleable, brightness/color held in memory) —
 so the full dashboard is developable with zero hardware. No serial port,
-plug IP, or zone IP needs to be valid in mock mode.
+plug IP, or bulb IP needs to be valid in mock mode.
 
 With real hardware, failures are loud but non-fatal: if the serial port can't
 be opened (or the USB drops) the reader logs `SERIAL UNAVAILABLE`/`SERIAL
 DROPPED` and retries every 5s; if the plug doesn't answer, the poller logs
-`PLUG UNREACHABLE` and keeps trying; if a WLED zone doesn't answer, the
-auto-lighting job logs `WLED ZONE UNREACHABLE` and keeps trying. Sensor
+`PLUG UNREACHABLE` and keeps trying; if a bulb zone doesn't answer, the
+auto-lighting job logs `BULB ZONE UNREACHABLE` and keeps trying. Sensor
 ingestion, plug polling, and the auto-lighting job run on independent
 threads and never block each other.
 
@@ -64,12 +64,12 @@ provisional. Temporary scaffolding — clear it once real data flows.
 | `app/serial_reader.py` | serial thread: `KEY:VALUE` lines → DB; command sending |
 | `app/mystrom.py` | myStrom local REST client (+ mock) |
 | `app/poller.py` | plug polling thread → DB |
-| `app/wled.py` | WLED zone local JSON API client (+ mock) |
+| `app/shelly_bulb.py` | Shelly bulb local JSON-RPC client, incl. the 0-255 ↔ 1-100 % brightness conversion (+ mock) |
 | `app/lighting.py` | auto-lighting thread: lux → brightness for zones in `auto` mode |
 | `app/scenes.py` | house modes (Sleeping/Day/Away): activation, wake timer, overnight summary |
 | `app/planner.py` | calendar events (recurrence, categories, all-day/multi-day) + to-do tasks: own tables, own blueprint, morning snapshot |
 | `app/api.py` | REST endpoints (devices/sensors/scenes — planner endpoints live in `planner.py`) |
-| `tests/` | unittest suite (scenes, planner) — runs entirely against mock hardware |
+| `tests/` | unittest suite (scenes, planner, health, bulb client) — runs entirely against mock hardware |
 
 ## API
 
@@ -80,13 +80,13 @@ provisional. Temporary scaffolding — clear it once real data flows.
 | `GET /api/sensors/stats?metric=temp` | 24h min/max/avg + 7d avg |
 | `GET /api/sensors/profile?metric=temp` | "typical day": 7d avg per half-hour of day |
 | `GET /api/motion/events?range=24h` | recent motion detections + count in range |
-| `GET /api/devices` | device registry: plugs with last polled power, WLED zones with live state + mode |
-| `GET /api/devices/:id` | device + last polled state/power (plug) or live state (WLED zone) |
+| `GET /api/devices` | device registry: plugs with last polled power, bulb zones with live state + mode |
+| `GET /api/devices/:id` | device + last polled state/power (plug) or live state (bulb zone) |
 | `POST /api/devices/:id/toggle` | flip a plug relay |
 | `GET /api/devices/:id/power/history?range=24h` | plug power draw series |
 | `GET /api/devices/:id/power/stats` | plug 24h/7d avg draw + est. 24h kWh |
-| `POST /api/devices/:id/state` | set a WLED zone's on/brightness/color/effect |
-| `POST /api/devices/:id/mode` | set a WLED zone's mode: `manual` or `auto` |
+| `POST /api/devices/:id/state` | set a bulb zone's on/brightness/color |
+| `POST /api/devices/:id/mode` | set a bulb zone's mode: `manual` or `auto` |
 | `GET/PUT /api/settings/thresholds` | alert thresholds (persisted in the DB) |
 | `GET /api/scenes` | house modes + per-device target states |
 | `POST /api/scenes/:name/activate` | activate a scene (optional `wake_time` for Sleeping) |
@@ -100,9 +100,9 @@ provisional. Temporary scaffolding — clear it once real data flows.
 | `POST /api/arduino/command` | send a raw protocol line to the Arduino |
 
 Plugs are seeded from `MYSTROM_PLUG_IP` / `MYSTROM_PLUG2_IP` in `.env`; to add
-a third, extend `PLUG_SEEDS` in `app/db.py` and add its IP to `.env`. WLED
-zones work the same way via `WLED_CUPBOARD_IP` / `WLED_TABLE_IP` and
-`WLED_SEEDS`. Auto-lighting behavior (poll interval, lux threshold, target
+a third, extend `PLUG_SEEDS` in `app/db.py` and add its IP to `.env`. Bulb
+zones work the same way via `SHELLY_CUPBOARD_IP` / `SHELLY_ROOM_LED_IP` and
+`BULB_SEEDS`. Auto-lighting behavior (poll interval, lux threshold, target
 brightness) is tuned via `LIGHTING_POLL_INTERVAL` / `LIGHTING_LUX_THRESHOLD`
 / `LIGHTING_AUTO_BRIGHTNESS` in `.env`.
 

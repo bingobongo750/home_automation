@@ -24,7 +24,7 @@ from flask import Flask  # noqa: E402
 from app import db, health, lighting, planner, poller, scenes  # noqa: E402
 from app.api import api  # noqa: E402
 from app.mystrom import make_plug  # noqa: E402
-from app.wled import make_wled_zone  # noqa: E402
+from app.shelly_bulb import make_bulb  # noqa: E402
 
 
 def make_client():
@@ -44,8 +44,8 @@ class SceneTestCase(unittest.TestCase):
         for device in db.list_devices():
             if device["type"] == "wifi_plug":
                 poller.plugs[device["id"]] = make_plug(device["ip"])
-            elif device["type"] == "wled_zone":
-                lighting.zones[device["id"]] = make_wled_zone(device["ip"])
+            elif device["type"] == "bulb_zone":
+                lighting.zones[device["id"]] = make_bulb(device["ip"])
         cls.client = make_client()
         cls.devices = {d["name"]: d for d in db.list_devices()}
 
@@ -126,7 +126,7 @@ class SceneTestCase(unittest.TestCase):
             cupboard = self.zone("Cupboard").state()
             self.assertTrue(cupboard["on"])
             self.assertEqual(cupboard["brightness"], 10)
-            self.assertFalse(self.zone("Table").state()["on"])
+            self.assertFalse(self.zone("Room LED").state()["on"])
         finally:
             with db.connect() as conn:
                 conn.execute("DELETE FROM scenes WHERE name = 'TestNight'")
@@ -137,7 +137,7 @@ class SceneTestCase(unittest.TestCase):
         self.plug("Plug 1").set_state(True)
         self.plug("Plug 2").set_state(True)
         self.zone("Cupboard").set_state(on=True)
-        self.zone("Table").set_state(on=True)
+        self.zone("Room LED").set_state(on=True)
 
         resp = self.activate("Away")
         self.assertEqual(resp.status_code, 200)
@@ -146,12 +146,12 @@ class SceneTestCase(unittest.TestCase):
         self.assertTrue(all(d["ok"] for d in data["devices"]), data["devices"])
         # the group keys resolved to every actual device
         self.assertEqual({d["device"] for d in data["devices"]},
-                         {"Plug 1", "Plug 2", "Cupboard", "Table"})
+                         {"Plug 1", "Plug 2", "Cupboard", "Room LED"})
 
         self.assertFalse(self.plug("Plug 1").report()["relay_on"])
         self.assertFalse(self.plug("Plug 2").report()["relay_on"])
         self.assertFalse(self.zone("Cupboard").state()["on"])
-        self.assertFalse(self.zone("Table").state()["on"])
+        self.assertFalse(self.zone("Room LED").state()["on"])
         self.assertEqual(lighting._suppressing_scene(), "Away")
 
         active = self.client.get("/api/scenes/active").get_json()
@@ -161,7 +161,7 @@ class SceneTestCase(unittest.TestCase):
 
     def test_activate_sleeping_states(self):
         self.zone("Cupboard").set_state(on=True, brightness=255)
-        self.zone("Table").set_state(on=True)
+        self.zone("Room LED").set_state(on=True)
         self.plug("Plug 1").set_state(True)
         self.plug("Plug 2").set_state(True)
         resp = self.activate("Sleeping")
@@ -169,24 +169,24 @@ class SceneTestCase(unittest.TestCase):
 
         # everything dark: every LED zone off, every (unlocked) plug off
         self.assertFalse(self.zone("Cupboard").state()["on"])
-        self.assertFalse(self.zone("Table").state()["on"])
+        self.assertFalse(self.zone("Room LED").state()["on"])
         self.assertFalse(self.plug("Plug 1").report()["relay_on"])
         self.assertFalse(self.plug("Plug 2").report()["relay_on"])
         self.assertEqual(lighting._suppressing_scene(), "Sleeping")
 
     def test_day_lifts_suppression_and_preserves_zone_mode(self):
-        table_id = self.devices["Table"]["id"]
-        db.set_device_mode(table_id, "auto")
+        room_led_id = self.devices["Room LED"]["id"]
+        db.set_device_mode(room_led_id, "auto")
 
         self.activate("Sleeping")
         # a scene never rewrites the mode column — suppression is global
-        self.assertEqual(db.get_device(table_id)["mode"], "auto")
+        self.assertEqual(db.get_device(room_led_id)["mode"], "auto")
         self.assertEqual(lighting._suppressing_scene(), "Sleeping")
 
         resp = self.activate("Day")
         self.assertEqual(resp.status_code, 200)
         self.assertIsNone(lighting._suppressing_scene())
-        self.assertEqual(db.get_device(table_id)["mode"], "auto")
+        self.assertEqual(db.get_device(room_led_id)["mode"], "auto")
         self.assertTrue(self.plug("Plug 1").report()["relay_on"])
 
     def test_unknown_scene_404(self):
@@ -209,7 +209,7 @@ class SceneTestCase(unittest.TestCase):
         self.assertEqual(plug_result["skipped"], "locked")
         self.assertTrue(self.plug("Plug 1").report()["relay_on"])  # untouched
         # the rest of the scene still applied
-        self.assertFalse(self.zone("Table").state()["on"])
+        self.assertFalse(self.zone("Room LED").state()["on"])
 
     # ------------------------------------------------------------ wake time
 

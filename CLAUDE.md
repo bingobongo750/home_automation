@@ -33,16 +33,21 @@ serve HTTP, call REST APIs.
    The host's server calls each WiFi device's local REST API directly over the LAN.
    Currently two device types:
    - Two **myStrom WiFi Switch** plugs (Swiss Type J, local REST API, power monitoring
-     2–3680W) — "Plug 1" (Living Room) is physically installed, "Plug 2" is seeded in
+     2–3680W) — "Plug 1" is physically installed, "Plug 2" is seeded in
      the `devices` table as a placeholder IP until it's physically installed.
-   - Two **Shelly Multicolor Bulb E27 Gen3** smart bulbs ("Cupboard", "Table") —
-     self-contained WiFi RGBW bulbs (local JSON-RPC API over HTTP, no cloud required)
-     that screw into an ordinary E27 fixture; the fixture only ever supplies mains
-     power, all control electronics live in the bulb itself. Both are seeded as
-     placeholder IPs; neither is physically installed yet.
+   - Two **Shelly Multicolor Bulb E27 Gen3** smart bulbs ("Cupboard", the bulb in
+     the cupboard, and "Room LED", the room's ambient bulb) — self-contained WiFi
+     RGBW bulbs (local JSON-RPC API over HTTP, no cloud required) that screw into
+     an ordinary E27 fixture; the fixture only ever supplies mains power, all
+     control electronics live in the bulb itself. Both are seeded as placeholder
+     IPs; neither is physically installed yet.
    No cloud account or app is required for runtime control, only initial WiFi
    provisioning. Devices are modeled generically (see below) so further WiFi plugs or
    lighting zones can register without rewriting existing device logic.
+   The hub covers a **single room**, so the `devices.room` column is seeded empty
+   for every device and the dashboard shows the device name alone — the column
+   stays in the schema and API for a future multi-room hub, but don't reintroduce
+   per-device room labels here.
 
 ## Hardware inventory (wired / Arduino side)
 
@@ -317,7 +322,8 @@ keep this list in sync when endpoints change:
 - `POST /api/devices/:id/toggle` — turn a WiFi plug on/off
 - `GET /api/devices/:id/power/stats` — 24h/7d average draw + estimated 24h kWh
 - `GET /api/devices/:id/power/history` — power draw over time
-- `POST /api/devices/:id/state` — set a bulb zone's on/brightness/color/effect (any subset)
+- `POST /api/devices/:id/state` — set a bulb zone's on/brightness/color (any subset);
+  brightness is 0-255 hub-wide, converted to the Shelly's 1-100% only inside `app/shelly_bulb.py`
 - `POST /api/devices/:id/mode` — set a bulb zone's mode: `manual` or `auto`
 - `GET/PUT /api/settings/thresholds` — alert thresholds (min/max per metric + plug power draw); a reading outside its band flags that widget on the dashboard
 - `GET /api/scenes` — house modes and their per-device target states
@@ -370,11 +376,12 @@ keep this list in sync when endpoints change:
   stays clickable in both modes — a user can switch a zone off even while it's in
   `auto` (the lighting job may reassert brightness/on on its next tick, but a manual
   on/off click is never blocked by mode). Mode (`manual`/`auto`) is one of the control
-  rows alongside brightness/color/effect. In `auto` mode only the brightness control
+  rows alongside brightness/color. In `auto` mode only the brightness control
   goes read-only (the lighting job drives it from lux) but keeps displaying the live
-  value every poll rather than freezing or disappearing; color/effect stay editable in
-  either mode since the auto job never
-  touches them.
+  value every poll rather than freezing or disappearing; color stays editable in
+  either mode since the auto job never touches it. There is **no effect control** —
+  the Shelly bulb has no effect engine (numbered effects were a WLED feature, dropped
+  with the rest of that plan).
 - Each widget expands on click into an **overlay dialog** (detail view: range-scoped chart,
   min/max/avg stats, "typical now" 7d-avg-by-time-of-day) rather than expanding in place —
   in-place expansion was rejected because it reflowed the grid out from under the cursor.
