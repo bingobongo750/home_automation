@@ -49,3 +49,39 @@ the programming port (micro-USB nearer the DC jack) — it is `Serial` in the
 sketch and the port the host reads. Serial monitor at **115200 baud**. On
 boot the sketch prints `#`-prefixed status lines showing which sensors were
 detected; missing sensors are skipped, not fatal.
+
+**Free the serial port first.** The hub holds it open and its reconnect loop
+reclaims it every 5 s, which makes uploads fail or half-succeed. Release it
+without stopping the hub (lighting, scenes, planner and health keep running):
+
+```sh
+curl -X POST localhost:8000/api/arduino/serial \
+     -H 'Content-Type: application/json' -d '{"paused": true, "minutes": 20}'
+```
+
+A `"port_released": true` response means the port is genuinely closed and you
+can flash. The pause always self-expires; `{"paused": false}` ends it early.
+
+## Bring-up tools
+
+Throwaway diagnostics, **not** part of the hub. Flash one, fix the sensor,
+then flash `hub_node.ino` back.
+
+| Sketch | Purpose |
+|---|---|
+| `scd40_recovery/` | Interactive raw-I2C SCD40 diagnosis + recovery. Serial menu at 115200: bus scan, self-test, factory reset, guided FRC. **Start here.** |
+| `scd40_calibrate/` | Older one-shot FRC via the SparkFun driver. Superseded by the above. |
+
+`scd40_recovery` uses no driver library — only `Wire` — because the driver was
+hiding the failure: while periodic measurement is running the sensor **silently
+discards** factory-reset and FRC commands, reporting no error, so a driver call
+returns success while nothing happened. The sketch tracks measurement state and
+refuses restricted commands rather than letting them vanish, and prints every
+opcode, `endTransmission()` status, raw byte and decoded value.
+
+It is board-agnostic (`Wire.begin()` picks the right pins): SDA/SCL are 20/21
+on the Due, 18/19 on a Teensy 4.1. Compiles clean for both.
+
+Typical order: `0` bus scan → `2` self-test → `1` read config → `4` factory
+reset → power-cycle → `1` verify defaults returned → `5` FRC outdoors → `6`
+disable ASC if the sensor never sees outdoor air.

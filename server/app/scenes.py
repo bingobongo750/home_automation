@@ -23,6 +23,14 @@ generation counter makes an already-running stale timer a no-op. The pending
 wake is stored with the active scene, so init() re-arms it after a restart
 (an overdue wake fires immediately).
 
+Nightly schedule: a stored sleep window (db.get_sleep_schedule — default
+00:00 to 09:30, editable from the dashboard's settings dialog) activates
+Sleeping every night and hands back to Day in the morning, reusing the wake
+machinery above so the morning summary works exactly as it does manually. Its
+bedtime timer is separate from the wake timer, since a manual scene change
+must beat tonight's pending wake without cancelling tomorrow's bedtime. Like
+the wake timer it only switches scenes — it is not an alarm.
+
 Morning summary: every Sleeping -> Day transition (scheduled or manual)
 computes overnight stats from the readings table over the Sleeping window —
 temp/hum min/max/avg, CO2 start vs end (flagged if it climbed significantly),
@@ -51,7 +59,7 @@ DEFAULT_SCENE = "Day"
 # in the morning summary — roughly one "ventilate soon" step.
 CO2_RISE_FLAG_PPM = 200
 
-_WAKE_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+WAKE_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 # Reentrant so a firing wake timer can hold the lock across its staleness
 # check AND the activate() call it makes — no gap for a concurrent manual
@@ -59,6 +67,13 @@ _WAKE_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 _lock = threading.RLock()
 _wake_timer: threading.Timer | None = None
 _wake_generation = 0  # bumped on every arm/cancel; stale timers see a mismatch
+
+# The nightly schedule's bedtime timer is deliberately SEPARATE from the wake
+# timer above: activate() cancels the wake timer (a manual scene change must
+# beat a pending wake), but the recurring schedule has to survive that and
+# still come round the next night.
+_bedtime_timer: threading.Timer | None = None
+_bedtime_generation = 0
 
 
 class SceneError(Exception):
@@ -103,7 +118,7 @@ def activate(name: str, wake_time: str | None = None, *,
     if wake_time is not None:
         if scene["name"] != "Sleeping":
             raise SceneError("wake_time is only accepted when activating Sleeping")
-        if not _WAKE_TIME_RE.match(wake_time):
+        if not WAKE_TIME_RE.match(wake_time):
             raise SceneError(f"wake_time must be HH:MM (24h), got {wake_time!r}")
 
     with _lock:
@@ -146,9 +161,11 @@ def activate(name: str, wake_time: str | None = None, *,
 
 def init() -> None:
     """Called once at startup (after poller/lighting built their device
-    clients): restore a pending Sleeping->Day wake from the persisted active
-    scene. An overdue wake — the time passed while the backend was down —
-    fires immediately, synchronously, so the house isn't stuck in Sleeping."""
+    clients): arm the nightly schedule, and restore a pending Sleeping->Day
+    wake from the persisted active scene. An overdue wake — the time passed
+    while the backend was down — fires immediately, synchronously, so the
+    house isn't stuck in Sleeping."""
+    reschedule_bedtime()
     active = db.get_active_scene()
     if not active or active["name"] != "Sleeping" or not active.get("wake_at"):
         return
@@ -160,6 +177,78 @@ def init() -> None:
         with _lock:
             _arm_wake_locked(active["wake_at"])
         log.info("Re-armed pending wake: Sleeping -> Day at %s", active["wake_time"])
+
+
+# --------------------------------------------------------- nightly schedule
+
+def reschedule_bedtime() -> None:
+    """(Re)arm the nightly Sleeping activation from the stored schedule. Safe
+    to call any time — at startup, and whenever the schedule is edited.
+
+    A restart mid-window deliberately does NOT back-fill: it arms the next
+    bedtime and leaves the current scene alone, so coming back up at 02:00
+    never overrides a house someone deliberately put in Away.
+    """
+    schedule = db.get_sleep_schedule()
+    with _lock:
+        _cancel_bedtime_locked()
+        if not schedule.get("enabled"):
+            log.info("Nightly sleep schedule is off")
+            return
+        sleep_time = schedule["sleep_time"]
+        if not WAKE_TIME_RE.match(sleep_time):
+            log.error("Nightly sleep schedule has a bad sleep_time %r — not armed", sleep_time)
+            return
+        at = next_wake_at(sleep_time, time.time())
+        _arm_bedtime_locked(at)
+    log.info("Nightly schedule armed: Sleeping at %s, back to Day at %s",
+             sleep_time, schedule["wake_time"])
+
+
+def _arm_bedtime_locked(at: float) -> None:
+    global _bedtime_timer, _bedtime_generation
+    _bedtime_generation += 1
+    _bedtime_timer = threading.Timer(max(at - time.time(), 0.0),
+                                     _fire_bedtime, args=(_bedtime_generation,))
+    _bedtime_timer.daemon = True
+    _bedtime_timer.name = "scene-bedtime"
+    _bedtime_timer.start()
+
+
+def _cancel_bedtime_locked() -> None:
+    global _bedtime_timer, _bedtime_generation
+    _bedtime_generation += 1
+    if _bedtime_timer is not None:
+        _bedtime_timer.cancel()
+        _bedtime_timer = None
+
+
+def _fire_bedtime(generation: int) -> None:
+    """Timer callback: activate Sleeping for the night, carrying the
+    schedule's wake time so the existing Sleeping->Day machinery (and its
+    morning summary) handles the other end. Re-arms itself for tomorrow."""
+    try:
+        with _lock:
+            if generation != _bedtime_generation:
+                log.info("Stale bedtime timer ignored (schedule changed before it fired)")
+                return
+            schedule = db.get_sleep_schedule()
+            if not schedule.get("enabled"):
+                return
+            wake_time = schedule["wake_time"]
+            if not WAKE_TIME_RE.match(wake_time):
+                log.error("Nightly sleep schedule has a bad wake_time %r — "
+                          "activating Sleeping with no wake", wake_time)
+                wake_time = None
+            log.info("Nightly schedule: switching to Sleeping (scene change only, not an alarm)")
+            try:
+                activate("Sleeping", wake_time, source="nightly schedule")
+            except Exception:
+                log.exception("Scheduled Day -> Sleeping transition failed")
+    finally:
+        # Always come round again, even if tonight's activation blew up —
+        # one bad night must not silently end the recurring schedule.
+        reschedule_bedtime()
 
 
 # ------------------------------------------------------------- wake timer
@@ -282,11 +371,20 @@ def _apply_zone(device: dict, target: dict) -> dict:
     zone = lighting.zones.get(device["id"])
     if zone is None:
         return {"device": device["name"], "ok": False, "error": "zone not configured"}
-    zone.set_state(
-        on=target.get("on"),
-        brightness=target.get("brightness"),
-        color=target.get("color"),
-    )
+    # A scene may set ambient white (`ct`) or a custom colour (`rgb`), never
+    # both — the bulb lights one channel at a time. `ct` wins if a hand-edited
+    # row carries both, since ambient is the mostly-used mode.
+    ct = target.get("ct")
+    color = target.get("color")
+    try:
+        zone.set_state(
+            on=target.get("on"),
+            brightness=target.get("brightness"),
+            color=None if ct is not None else color,
+            ct=ct,
+        )
+    except ValueError as exc:   # malformed hand-edited scene row
+        return {"device": device["name"], "ok": False, "error": str(exc)}
     return {"device": device["name"], "ok": True}
 
 

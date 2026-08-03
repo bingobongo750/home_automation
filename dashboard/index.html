@@ -36,7 +36,7 @@
       <div class="link-status" id="link-status" title="Backend connection">
         <span class="link-dot" id="link-dot"></span><span id="link-label">connecting</span>
       </div>
-      <button class="settings-btn" id="settings-btn" title="Alert thresholds" aria-label="Alert thresholds">
+      <button class="settings-btn" id="settings-btn" title="Settings" aria-label="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="3"></circle>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -425,7 +425,7 @@
   <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <header class="detail-head">
       <div class="detail-title-group">
-        <h3 class="detail-title" id="settings-title">Alert thresholds</h3>
+        <h3 class="detail-title" id="settings-title">Settings</h3>
         <code class="wire-key">CFG</code>
       </div>
       <button class="detail-close" id="settings-close" aria-label="Close">×</button>
@@ -433,6 +433,7 @@
     <p class="settings-hint">A reading outside its range flags the widget on the board.
        Leave a field empty to disable that bound.</p>
     <form id="settings-form">
+      <h4 class="settings-section">Alert thresholds</h4>
       <div class="threshold-row">
         <span class="th-label">Temperature <span class="th-unit">°C</span></span>
         <label>min <input type="number" step="any" data-key="temp" data-bound="min"></label>
@@ -458,8 +459,30 @@
         <label>min <input type="number" step="any" data-key="power" data-bound="min"></label>
         <label>max <input type="number" step="any" data-key="power" data-bound="max"></label>
       </div>
+
+      <h4 class="settings-section">Auto lighting</h4>
+      <p class="settings-hint">A zone in auto mode fades as the room brightens: full
+         brightness in the dark, fully off at this level.</p>
+      <div class="threshold-row">
+        <span class="th-label">Lights off at <span class="th-unit">lx</span></span>
+        <label><input type="number" min="0" step="any" id="lux-off-input"></label>
+      </div>
+
+      <h4 class="settings-section">Nightly sleep</h4>
+      <p class="settings-hint">Switches the house to Sleeping and back to Day on its own,
+         every day. A scene change only — never an alarm, no sound or notification.</p>
+      <div class="threshold-row">
+        <span class="th-label">Run every night</span>
+        <label><input type="checkbox" id="sleep-enabled-input"></label>
+      </div>
+      <div class="threshold-row">
+        <span class="th-label">Sleeping</span>
+        <label>from <input type="time" id="sleep-from-input"></label>
+        <label>to <input type="time" id="sleep-to-input"></label>
+      </div>
+
       <div class="settings-actions">
-        <button type="submit" class="save-btn">Save thresholds</button>
+        <button type="submit" class="save-btn">Save settings</button>
         <span class="save-note" id="save-note" role="status"></span>
       </div>
     </form>

@@ -127,10 +127,37 @@ data before it hits the database or API layer.
 - `app/lighting.py` is a **separate** background thread (not the plug poller, not the
   serial reader) that, on its own interval (`LIGHTING_POLL_INTERVAL`), pushes a
   brightness update to every zone currently in `auto` mode based on the latest BH1750
-  `lux` reading already in the DB: below `LIGHTING_LUX_THRESHOLD` it turns the zone on to
-  `LIGHTING_AUTO_BRIGHTNESS`; at/above it, it turns the zone off. All three are env vars,
-  not hardcoded. Zones in `manual` mode are left alone — the dashboard drives those
-  directly via `POST /api/devices/:id/state`.
+  `lux` reading already in the DB. It is a **linear ramp, not a threshold**: full
+  `LIGHTING_AUTO_BRIGHTNESS` in a pitch-dark room, fading to off exactly at the
+  `lux_off` setting. `lux_off` is **user-owned** — stored in `settings`, edited from the
+  dashboard's settings dialog via `GET/PUT /api/settings/lighting`, and seeded from the
+  `LIGHTING_LUX_THRESHOLD` env var so an untouched install behaves as the env says.
+  Zones in `manual` mode are left alone — the dashboard drives those directly via
+  `POST /api/devices/:id/state`.
+- **Ambient lighting is CCT, not RGB.** The bulb has a dedicated white channel and
+  separate R/G/B dies, and lights only one at a time (`mode`). The ambient/warmth
+  control sends `ct` in kelvin and the bulb runs its white channel; `rgb` is reserved
+  for the dashboard's "Custom" colour picker. This is a brightness decision, measured
+  on the real bulb at full brightness: `cct` 2700 K draws **8.7 W**, the equivalent
+  warm white mixed from the RGB dies draws **5.5 W**, and the lumen gap is wider still
+  because RGB dies are far less efficacious per watt than a white phosphor. Faking
+  warm white out of the colour dies is what made ambient lighting dim — never route
+  the warmth control back through `rgb`.
+- `ct` limits are **2700–6500 K and are hard**: the bulb answers anything outside them
+  with JSON-RPC error `-103` rather than clamping, so a caller must clamp first
+  (`shelly_bulb.clamp_ct`). This is why the warmth slider starts at 2700 K and not the
+  1800 K "candle flame" it used to — that floor was only reachable while ambient was
+  faked from RGB. Sub-2700 K amber is still available, dimly, via Custom colour.
+- `color` and `ct` are **mutually exclusive** in `POST /api/devices/:id/state`, in
+  `shelly_bulb.set_state()` and in a scene's target — sending both would make the
+  winner depend on `mode`. A brightness-only update touches neither, so the
+  auto-lighting job never knocks a zone out of ambient white.
+- The **ambient colour ramp** (`WARMTH_RAMP` in `dashboard/app.js`) is now **preview
+  only** — it tints the swatch and the slider track and never reaches the hardware.
+  It is deliberately not the black-body/Planckian values every Kelvin-to-RGB tool
+  returns: those are calibrated for a screen's D65 white point and read colder as a
+  small UI swatch than the light the bulb actually emits. The CSS track reads the same
+  ramp through the `--warmth-gradient` custom property.
 - Physical setup (screwing in the bulb, WiFi provisioning, static IP) happens later —
   the backend, database schema, and API already assume both zones exist from day one,
   same as the myStrom plug.
@@ -161,6 +188,15 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
 - The active scene (name + activation timestamp + pending wake time) persists in
   the `settings` table so it survives backend restarts. Never-activated counts
   as "Day" — normal operation.
+- **Nightly schedule:** a stored sleep window (`GET/PUT /api/settings/sleep-schedule`,
+  default 00:00 → 09:30, edited in the settings dialog) activates Sleeping every night
+  and hands back to Day in the morning, reusing the wake machinery below so the morning
+  summary works exactly as it does manually. Its bedtime timer is deliberately
+  **separate** from the wake timer: a manual scene change must beat tonight's pending
+  wake without cancelling tomorrow's bedtime. A restart mid-window does not back-fill —
+  it arms the next bedtime and leaves the current scene alone, so coming back up at
+  02:00 never overrides a house someone deliberately put in Away. Scene changes only,
+  never an alarm.
 - **Auto-lighting suppression:** while any scene other than "Day" is active, the
   lux-based auto job in `app/lighting.py` is paused wholesale — the scene's
   explicit values win. A scene never rewrites a zone's `mode` column, so
@@ -301,6 +337,14 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
   running on Pi-specific hardware — it should run unmodified on either machine.
 - No MQTT broker yet — single Arduino node for now. Keep the device/data layer decoupled
   enough that adding Mosquitto later for multi-room nodes doesn't require a rewrite.
+- Sensor readings are checked against a physically plausible band
+  (`METRIC_RANGE` in `app/serial_reader.py`) and an out-of-band value is logged
+  loudly — but **stored anyway**. Ingest never drops a reading it dislikes: a
+  failing sensor emits in-protocol nonsense rather than going quiet (the SCD4x
+  reports `CO2:0` for an invalid channel), and filtering that made a broken
+  sensor look merely idle, which is unreviewable from the dashboard. Raw
+  telemetry stays raw. If implausible rows need excluding from averages, do it
+  at the query layer where it can be switched off — not at ingest.
 - `MOCK_HARDWARE=1` env var (see `.env.example`) swaps the serial reader, the myStrom
   client, and the Shelly bulb client for fake data generators (plausible sinusoidal
   sensor drift, wobbling plug wattage, in-memory zone state) so the dashboard is
@@ -322,10 +366,14 @@ keep this list in sync when endpoints change:
 - `POST /api/devices/:id/toggle` — turn a WiFi plug on/off
 - `GET /api/devices/:id/power/stats` — 24h/7d average draw + estimated 24h kWh
 - `GET /api/devices/:id/power/history` — power draw over time
-- `POST /api/devices/:id/state` — set a bulb zone's on/brightness/color (any subset);
-  brightness is 0-255 hub-wide, converted to the Shelly's 1-100% only inside `app/shelly_bulb.py`
+- `POST /api/devices/:id/state` — set a bulb zone's on/brightness/`ct`/color (any subset);
+  brightness is 0-255 hub-wide, converted to the Shelly's 1-100% only inside `app/shelly_bulb.py`.
+  `ct` (2700-6500 K) drives the white channel — the ambient control, and much brighter;
+  `color` drives the RGB dies. The two are mutually exclusive; responses carry `color_mode`
 - `POST /api/devices/:id/mode` — set a bulb zone's mode: `manual` or `auto`
 - `GET/PUT /api/settings/thresholds` — alert thresholds (min/max per metric + plug power draw); a reading outside its band flags that widget on the dashboard
+- `GET/PUT /api/settings/lighting` — auto-lighting `lux_off`: the ambient level at which an `auto` zone is fully off (brightness ramps linearly from full at pitch dark down to nothing there)
+- `GET/PUT /api/settings/sleep-schedule` — nightly Sleeping window (`enabled`, `sleep_time`, `wake_time` as local "HH:MM"); PUT re-arms it immediately
 - `GET /api/scenes` — house modes and their per-device target states
 - `POST /api/scenes/:name/activate` — activate a scene; body may carry `wake_time` ("HH:MM") when activating Sleeping
 - `GET /api/scenes/active` — current scene + activation time + pending wake time (if set)
@@ -354,6 +402,7 @@ keep this list in sync when endpoints change:
 - `POST /api/tasks`, `PUT /api/tasks/:id`, `DELETE /api/tasks/:id` — task CRUD (PUT is partial, including `done`)
 - `POST /api/tasks/:id/complete` — one-tap task completion (idempotent)
 - `POST /api/arduino/command` — send a raw `KEY:VALUE` protocol line to the Arduino (exists for any future wired actuator and manual testing; bulb zones do not use this)
+- `GET/POST /api/arduino/serial` — release the serial port for reflashing (`{"paused": true, "minutes": 20}`) without stopping the hub; the pause always self-expires (default 15min, capped 2h)
 
 ## Frontend
 
@@ -386,8 +435,13 @@ keep this list in sync when endpoints change:
   min/max/avg stats, "typical now" 7d-avg-by-time-of-day) rather than expanding in place —
   in-place expansion was rejected because it reflowed the grid out from under the cursor.
   Never make widget interaction shift the board layout.
-- An alert-thresholds settings dialog (gear icon) lets the min/max band per metric (and
-  plug power draw) be edited; a reading outside its band flags that widget on the board.
+- A settings dialog (gear icon) with three sections: **Alert thresholds** (min/max band
+  per metric and plug power draw — a reading outside its band flags that widget on the
+  board), **Auto lighting** (the `lux_off` level), and **Nightly sleep** (the recurring
+  Sleeping window). Each section posts to its own endpoint on save.
+- Chart y-axes never run negative except temperature — humidity, lux, CO2 and watts
+  have no negative values, so `METRICS.allowNegative` gates the axis padding and
+  everything else clamps at 0.
 - A persistent MODE (scene) switch lives in the header — Sleeping/Day/Away, active one
   lit, pending wake ("→ Day 07:00") shown beside it — since a scene cuts across every
   device zone on the page. Sleeping opens a small dialog with the optional wake time,

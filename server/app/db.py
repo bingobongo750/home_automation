@@ -254,6 +254,40 @@ def set_thresholds(thresholds: dict) -> None:
     set_setting("thresholds", thresholds)
 
 
+def get_lighting() -> dict:
+    """Auto-lighting settings, user-owned via the dashboard's settings dialog.
+
+    `lux_off` is the ambient level at which a zone in 'auto' mode is fully
+    off; app/lighting.py ramps brightness linearly from LIGHTING_AUTO_BRIGHTNESS
+    at pitch dark down to nothing there. LIGHTING_LUX_THRESHOLD seeds it, so an
+    untouched install behaves as the env var says."""
+    saved = get_setting("lighting") or {}
+    value = saved.get("lux_off")
+    if value is None:
+        value = config.LIGHTING_LUX_THRESHOLD
+    return {"lux_off": float(value)}
+
+
+def set_lighting(settings: dict) -> None:
+    set_setting("lighting", settings)
+
+
+# Nightly Sleeping window, applied by app/scenes.py. `sleep_time` activates
+# Sleeping, `wake_time` hands back to Day (with the usual morning summary) —
+# both plain local "HH:MM", both editable from the dashboard's settings dialog.
+DEFAULT_SLEEP_SCHEDULE = {"enabled": True, "sleep_time": "00:00", "wake_time": "09:30"}
+
+
+def get_sleep_schedule() -> dict:
+    saved = get_setting("sleep_schedule") or {}
+    return {key: saved.get(key, default)
+            for key, default in DEFAULT_SLEEP_SCHEDULE.items()}
+
+
+def set_sleep_schedule(schedule: dict) -> None:
+    set_setting("sleep_schedule", schedule)
+
+
 def get_active_scene() -> dict | None:
     """{"name", "activated_at", "wake_time", "wake_at"} for the current house
     mode, or None if no scene has ever been activated (the backend treats

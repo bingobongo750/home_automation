@@ -375,6 +375,19 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .settings-hint { margin: 4px 0 16px; font-size: 12.5px; color: var(--muted); }
 
+/* section captions inside the settings dialog — same silkscreen voice as the
+   board's .zone-label, one step quieter */
+.settings-section {
+  margin: 20px 0 2px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.settings-section:first-of-type { margin-top: 4px; }
+.settings-section + .settings-hint { margin-top: 4px; }
+
 .threshold-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -410,6 +423,14 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .threshold-row input:focus-visible {
   outline: 2px solid var(--copper);
   outline-offset: 1px;
+}
+.threshold-row input[type="time"] { width: 106px; }
+.threshold-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--copper);
+  cursor: pointer;
 }
 
 .settings-actions {
@@ -753,15 +774,17 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   border: 1px solid var(--hairline);
 }
 
-/* warm-amber-to-cool-blue gradient track — the slider's own visual metaphor
-   (real color temperature), independent of the copper accent used elsewhere */
+/* candle-to-daylight gradient track — the slider's own visual metaphor,
+   independent of the copper accent used elsewhere. The stops come from
+   WARMTH_RAMP in app.js via --warmth-gradient, so the track always paints
+   exactly the colors the slider sends; the fallback here mirrors its ends. */
 .light-warmth {
   flex: 1;
   appearance: none;
   -webkit-appearance: none;
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(to right, #ff9329, #ffd9a0 35%, #fff4e8 50%, #dce8ff 65%, #9dc4ff);
+  background: var(--warmth-gradient, linear-gradient(to right, #ff5608, #ff8c2d, #ffc382, #ffffff));
   cursor: pointer;
 }
 .light-warmth::-webkit-slider-thumb {
@@ -778,7 +801,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .light-warmth::-moz-range-track {
   height: 6px;
   border-radius: 3px;
-  background: linear-gradient(to right, #ff9329, #ffd9a0 35%, #fff4e8 50%, #dce8ff 65%, #9dc4ff);
+  background: var(--warmth-gradient, linear-gradient(to right, #ff5608, #ff8c2d, #ffc382, #ffffff));
 }
 .light-warmth::-moz-range-thumb {
   width: 14px;

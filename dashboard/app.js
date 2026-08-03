@@ -14,8 +14,11 @@ const POLL_FAST_MS = 5000;   // latest values, plug states, ticker
 const POLL_SLOW_MS = 30000;  // sparklines + open detail dialog
 const SPARK_RANGE = "3h";
 
+/* allowNegative: whether a chart's y-axis may drop below zero. Only
+   temperature can legitimately be negative — a humidity, lux, CO2 or watt
+   axis running into negative numbers is nonsense, so those clamp at 0. */
 const METRICS = [
-  { id: "temp", key: "TEMP", unit: "°C", decimals: 1, color: cssVar("--s-temp") },
+  { id: "temp", key: "TEMP", unit: "°C", decimals: 1, color: cssVar("--s-temp"), allowNegative: true },
   { id: "hum",  key: "HUM",  unit: "%RH", decimals: 1, color: cssVar("--s-hum") },
   { id: "lux",  key: "LUX",  unit: "lx",  decimals: 0, color: cssVar("--s-lux") },
   { id: "co2",  key: "CO2",  unit: "ppm", decimals: 0, color: cssVar("--s-co2") },
@@ -375,6 +378,13 @@ function renderPlugs(devices) {
 
 const lightCards = new Map(); // device id -> .light-card element
 const WARMTH_DEFAULT_K = 2700; // typical warm-white home bulb
+/* Hard limits of the bulb's white channel, not a taste choice: it answers a
+   `ct` outside 2700-6500 with JSON-RPC error -103 rather than clamping, so a
+   wider slider would simply fail on every send below 2700. The old 1800 K
+   "candle flame" floor was reachable only because the ambient control used to
+   fake warm white out of the RGB dies — which is exactly what made it dim. */
+const WARMTH_MIN_K = 2700;     // bulb's warmest true white
+const WARMTH_MAX_K = 6500;     // crisp daylight white
 
 function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
@@ -385,21 +395,64 @@ function rgbToHex([r, g, b]) {
   return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
 }
 
-// Approximate black-body RGB for a color temperature in Kelvin (Tanner
-// Helland's fit) — good enough for a pleasant warm/cool slider, not colorimetry.
-function kelvinToRgb(kelvin) {
-  const temp = kelvin / 100;
-  let r, g, b;
-  if (temp <= 66) {
-    r = 255;
-    g = temp <= 19 ? 0 : 99.4708025861 * Math.log(temp) - 161.1195681661;
-  } else {
-    r = 329.698727446 * Math.pow(temp - 60, -0.1332047592);
-    g = 288.1221695283 * Math.pow(temp - 60, -0.0755148492);
-  }
-  b = temp >= 66 ? 255 : temp <= 19 ? 0 : 138.5177312231 * Math.log(temp - 10) - 305.0447927307;
-  return [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))));
+function clampK(kelvin) {
+  return Math.max(WARMTH_MIN_K, Math.min(WARMTH_MAX_K, Math.round(kelvin)));
 }
+
+/* The ambient ramp — now PREVIEW ONLY.
+
+   The ambient control no longer sends RGB at all. It sends a `ct` in kelvin
+   and the bulb lights its dedicated white channel, which is where nearly all
+   of its output lives (measured at full brightness on the real bulb: cct
+   2700K = 8.7W, the equivalent RGB warm white = 5.5W, and the lumen gap is
+   wider still because RGB dies are far less efficacious per watt). Faking warm
+   white from the colour dies is what made ambient lighting dim.
+
+   These values now only tint the swatch and the slider track, so the user can
+   see roughly what a given kelvin looks like. They are deliberately NOT the
+   black-body/Planckian values every Kelvin-to-RGB tool returns: those are
+   calibrated for a screen's D65 white point and, rendered as a small UI
+   swatch, read colder than the warm light the bulb actually emits. Holding R
+   at full with B below G keeps the preview honest about the warmth.
+
+   Nothing here reaches the hardware any more, so a change to these values
+   cannot affect what the bulb does — only how the control looks. */
+const WARMTH_RAMP = [
+  [2700, [255, 147, 55]],    // warm white (tungsten)
+  [3200, [255, 165, 80]],
+  [4000, [255, 190, 120]],
+  [5000, [255, 212, 165]],
+  [6500, [255, 228, 206]],   // neutral white
+];
+
+function kelvinToRgb(kelvin) {
+  const k = Math.max(WARMTH_MIN_K, Math.min(WARMTH_MAX_K, kelvin));
+  let lo = WARMTH_RAMP[0];
+  let hi = WARMTH_RAMP[WARMTH_RAMP.length - 1];
+  for (let i = 0; i < WARMTH_RAMP.length - 1; i++) {
+    if (k >= WARMTH_RAMP[i][0] && k <= WARMTH_RAMP[i + 1][0]) {
+      lo = WARMTH_RAMP[i];
+      hi = WARMTH_RAMP[i + 1];
+      break;
+    }
+  }
+  const span = hi[0] - lo[0];
+  const t = span === 0 ? 0 : (k - lo[0]) / span;
+  return lo[1].map((v, i) => Math.round(v + (hi[1][i] - v) * t));
+}
+
+/* The slider track paints the same ramp it sends, so the gradient can't drift
+   from the colors — it used to end in a blue that no Kelvin on the slider
+   actually produced. A custom property because ::-moz-range-track and
+   ::-webkit-slider-runnable-track can't be styled inline. */
+function warmthGradientCss() {
+  const stops = WARMTH_RAMP.map(([k, rgb]) => {
+    const pct = ((k - WARMTH_MIN_K) / (WARMTH_MAX_K - WARMTH_MIN_K)) * 100;
+    return `${rgbToHex(rgb)} ${pct.toFixed(1)}%`;
+  });
+  return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+document.documentElement.style.setProperty("--warmth-gradient", warmthGradientCss());
 
 function lightCardDOM(device) {
   const card = document.createElement("article");
@@ -439,7 +492,7 @@ function lightCardDOM(device) {
       </div>
       <div class="light-field light-warmth-field">
         <span class="light-field-label"></span>
-        <input type="range" min="2000" max="6500" step="50" value="${WARMTH_DEFAULT_K}" class="light-warmth" disabled>
+        <input type="range" min="${WARMTH_MIN_K}" max="${WARMTH_MAX_K}" step="50" value="${WARMTH_DEFAULT_K}" class="light-warmth" disabled>
         <span class="light-warmth-value">${WARMTH_DEFAULT_K}K</span>
       </div>
       <label class="light-field light-rgb-field" hidden>
@@ -460,12 +513,24 @@ function lightCardDOM(device) {
 
   const modeButtons = card.querySelectorAll(".color-mode-btn");
   modeButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", async () => {
       if (btn.disabled) return;
       modeButtons.forEach((b) => b.classList.toggle("active", b === btn));
       const isAmbient = btn.dataset.mode === "ambient";
       card.querySelector(".light-warmth-field").hidden = !isAmbient;
       card.querySelector(".light-rgb-field").hidden = isAmbient;
+      // Switch the bulb's channel straight away, rather than waiting for the
+      // user to also nudge a slider. Without this the bulb stays on the other
+      // channel and the next poll snaps the panel back to it.
+      const body = isAmbient
+        ? { ct: clampK(Number(card.querySelector(".light-warmth").value)) }
+        : { color: hexToRgb(card.querySelector(".light-color").value) };
+      try {
+        applyLightState(card, await postJSON(`/api/devices/${device.id}/state`, body));
+        status.textContent = "";
+      } catch {
+        status.textContent = "Couldn't reach the zone.";
+      }
     });
   });
 
@@ -521,8 +586,11 @@ function lightCardDOM(device) {
   });
   warmth.addEventListener("change", async () => {
     try {
+      // Sends `ct`, never rgb: this drives the bulb's white channel, which is
+      // both the correct rendering of "warm white" and far brighter than
+      // mixing the same colour out of the RGB dies.
       applyLightState(card, await postJSON(`/api/devices/${device.id}/state`,
-        { color: kelvinToRgb(Number(warmth.value)) }));
+        { ct: Number(warmth.value) }));
       status.textContent = "";
     } catch {
       status.textContent = "Couldn't reach the zone.";
@@ -574,8 +642,24 @@ function applyLightState(card, state) {
   card.querySelector(".light-brightness-value").textContent = brightness.value;
   if (state.color) {
     card.querySelector(".light-color").value = rgbToHex(state.color);
-    card.querySelector(".light-color-swatch").style.background = rgbToHex(state.color);
   }
+  if (state.ct) {
+    const warmth = card.querySelector(".light-warmth");
+    warmth.value = clampK(state.ct);
+    card.querySelector(".light-warmth-value").textContent = `${warmth.value}K`;
+  }
+  // The bulb lights one channel at a time, so follow whichever it reports —
+  // otherwise a change made in the Shelly app (or by a scene) leaves the card
+  // showing the wrong control and the swatch showing a colour that is not lit.
+  const ambient = (state.color_mode || "cct") !== "rgb";
+  card.querySelectorAll(".color-mode-btn").forEach((b) => {
+    b.classList.toggle("active", (b.dataset.mode === "ambient") === ambient);
+  });
+  card.querySelector(".light-warmth-field").hidden = !ambient;
+  card.querySelector(".light-rgb-field").hidden = ambient;
+  card.querySelector(".light-color-swatch").style.background = ambient
+    ? rgbToHex(kelvinToRgb(Number(card.querySelector(".light-warmth").value)))
+    : rgbToHex(state.color || [255, 176, 102]);
 }
 
 function renderLighting(devices, latest) {
@@ -694,10 +778,18 @@ document.addEventListener("keydown", (ev) => {
 const settingsOverlay = document.getElementById("settings-overlay");
 const settingsForm = document.getElementById("settings-form");
 const saveNote = document.getElementById("save-note");
+const luxOffInput = document.getElementById("lux-off-input");
+const sleepEnabledInput = document.getElementById("sleep-enabled-input");
+const sleepFromInput = document.getElementById("sleep-from-input");
+const sleepToInput = document.getElementById("sleep-to-input");
 
-function openSettings() {
+// data-key marks the threshold inputs specifically — the dialog also holds the
+// auto-lighting and nightly-sleep fields, which post to their own endpoints.
+const thresholdInputs = () => settingsForm.querySelectorAll(".threshold-row input[data-key]");
+
+async function openSettings() {
   if (thresholds) {
-    settingsForm.querySelectorAll("input").forEach((input) => {
+    thresholdInputs().forEach((input) => {
       const t = thresholds[input.dataset.key];
       const v = t ? t[input.dataset.bound] : null;
       input.value = v === null || v === undefined ? "" : v;
@@ -708,6 +800,21 @@ function openSettings() {
   settingsOverlay.hidden = false;
   document.body.style.overflow = "hidden";
   settingsForm.querySelector("input").focus();
+  // Fetched on open rather than kept in the poll loop — neither changes
+  // except from this dialog, so there's nothing to keep live.
+  try {
+    const [lighting, schedule] = await Promise.all([
+      getJSON("/api/settings/lighting"),
+      getJSON("/api/settings/sleep-schedule"),
+    ]);
+    luxOffInput.value = lighting.lux_off;
+    sleepEnabledInput.checked = !!schedule.enabled;
+    sleepFromInput.value = schedule.sleep_time;
+    sleepToInput.value = schedule.wake_time;
+  } catch {
+    saveNote.textContent = "Couldn't load lighting/sleep settings.";
+    saveNote.className = "save-note err";
+  }
 }
 
 function closeSettings() {
@@ -724,22 +831,25 @@ document.getElementById("settings-backdrop").addEventListener("click", closeSett
 
 settingsForm.addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const body = {};
-  settingsForm.querySelectorAll("input").forEach((input) => {
+  const thresholdBody = {};
+  thresholdInputs().forEach((input) => {
     const key = input.dataset.key;
-    body[key] = body[key] || {};
-    body[key][input.dataset.bound] =
+    thresholdBody[key] = thresholdBody[key] || {};
+    thresholdBody[key][input.dataset.bound] =
       input.value.trim() === "" ? null : Number(input.value);
   });
   try {
-    const resp = await fetch("/api/settings/thresholds", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+    // Sequential, not Promise.all: if one is rejected the note should name
+    // that failure, and a half-saved dialog is easier to reason about when
+    // the sections apply in the order they're shown.
+    thresholds = await putJSON("/api/settings/thresholds", thresholdBody);
+    await putJSON("/api/settings/lighting",
+      { lux_off: luxOffInput.value.trim() === "" ? null : Number(luxOffInput.value) });
+    await putJSON("/api/settings/sleep-schedule", {
+      enabled: sleepEnabledInput.checked,
+      sleep_time: sleepFromInput.value,
+      wake_time: sleepToInput.value,
     });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(data.error || "save failed");
-    thresholds = data;
     saveNote.textContent = "Saved.";
     saveNote.className = "save-note ok";
     pollFast(); // re-evaluate widget alerts right away
@@ -1220,6 +1330,11 @@ function drawChart(container, points, opts) {
   if (yMin === yMax) { yMin -= 1; yMax += 1; }
   const ySpanRaw = yMax - yMin;
   yMin -= ySpanRaw * 0.12; yMax += ySpanRaw * 0.12;
+  // Headroom is fine above, but the 12% below can push the axis negative on a
+  // quantity that has no negative values (see METRICS.allowNegative). Clamp
+  // rather than skip the padding, so a series resting at 0 still sits off the
+  // floor when it can go negative, and lands exactly on it when it can't.
+  if (!opts.allowNegative) yMin = Math.max(0, yMin);
   const xSpan = xMax - xMin;
 
   const X = (ts) => pad.left + ((ts - xMin) / xSpan) * iw;

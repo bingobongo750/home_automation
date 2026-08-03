@@ -4,6 +4,10 @@ reading already sitting in the sensor DB. Deliberately its own thread — same
 reasoning as poller.py: this event source is unrelated to the serial reader
 and the plug poller, and must not block on (or be blocked by) either.
 
+Brightness follows lux on a linear ramp: full LIGHTING_AUTO_BRIGHTNESS in a
+pitch-dark room, fading to off exactly at the `lux_off` setting the dashboard
+owns (LIGHTING_LUX_THRESHOLD seeds it). See _desired_state.
+
 Devices in 'manual' mode are left alone; the dashboard drives those directly
 through /api/devices/:id/state.
 
@@ -52,13 +56,26 @@ def _suppressing_scene() -> str | None:
     return None
 
 
-def _desired_state(lux: float | None) -> tuple[bool, int]:
-    """-> (on, brightness) for the given lux reading. Below the threshold the
-    room counts as dark and the zone lights up to LIGHTING_AUTO_BRIGHTNESS;
-    at/above it the zone turns off."""
-    if lux is None or lux < config.LIGHTING_LUX_THRESHOLD:
-        return True, config.LIGHTING_AUTO_BRIGHTNESS
-    return False, 0
+def _desired_state(lux: float | None, lux_off: float) -> tuple[bool, int]:
+    """-> (on, brightness) for the given lux reading.
+
+    A linear ramp, not a cliff: pitch dark (0 lx) gets the full
+    LIGHTING_AUTO_BRIGHTNESS, and the zone fades out as the room brightens,
+    reaching off exactly at `lux_off` (the user-owned setting — see
+    db.get_lighting). A missing lux reading is treated as dark, same as the
+    threshold version did: better a lit room than a dark one on sensor loss.
+
+    Brightness is rounded, so the last stretch below `lux_off` lands on 0 and
+    the zone switches off rather than sitting at an invisible 1/255 that the
+    Shelly would floor up to 1 %.
+    """
+    if lux_off <= 0:            # cutoff at 0 lx: auto mode never lights up
+        return False, 0
+    fraction = 1.0 if lux is None else 1.0 - lux / lux_off
+    brightness = round(config.LIGHTING_AUTO_BRIGHTNESS * min(1.0, fraction))
+    if brightness <= 0:
+        return False, 0
+    return True, brightness
 
 
 def _auto_loop() -> None:
@@ -77,7 +94,11 @@ def _auto_loop() -> None:
                             if d["type"] == "bulb_zone" and d.get("mode") == "auto"}
             if auto_devices:
                 latest = db.latest_readings().get("lux")
-                on, brightness = _desired_state(latest["value"] if latest else None)
+                # Read every tick, not once at startup — the dashboard's
+                # settings dialog can change the cutoff while the job runs.
+                lux_off = db.get_lighting()["lux_off"]
+                on, brightness = _desired_state(latest["value"] if latest else None,
+                                                lux_off)
                 with push_lock:
                     # Re-check under the lock: a scene may have activated
                     # since the top of this tick — its values must win, so

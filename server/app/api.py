@@ -6,7 +6,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from . import db, lighting, poller, scenes, serial_reader
+from . import db, lighting, poller, scenes, serial_reader, shelly_bulb
 from .mystrom import PlugError
 from .shelly_bulb import BulbError
 
@@ -66,6 +66,56 @@ def put_thresholds():
         clean[key] = bounds
     db.set_thresholds(clean)
     log.info("Alert thresholds updated: %s", clean)
+    return jsonify(clean)
+
+
+@api.get("/settings/lighting")
+def get_lighting_settings():
+    return jsonify(db.get_lighting())
+
+
+@api.put("/settings/lighting")
+def put_lighting_settings():
+    """Auto-lighting settings. Body: {"lux_off": 50} — the ambient level at
+    which a zone in 'auto' mode is fully off; brightness ramps linearly from
+    full at pitch dark down to nothing there."""
+    body = request.get_json(silent=True) or {}
+    value = body.get("lux_off")
+    if value is None or value == "":
+        return jsonify({"error": "lux_off is required"}), 400
+    try:
+        lux_off = float(value)
+    except (TypeError, ValueError):
+        return jsonify({"error": "lux_off must be a number"}), 400
+    if lux_off < 0:
+        return jsonify({"error": "lux_off must be 0 or more"}), 400
+    clean = {"lux_off": lux_off}
+    db.set_lighting(clean)
+    log.info("Auto-lighting settings updated: %s", clean)
+    lighting.poke()  # apply on the next tick, not up to an interval later
+    return jsonify(clean)
+
+
+@api.get("/settings/sleep-schedule")
+def get_sleep_schedule():
+    return jsonify(db.get_sleep_schedule())
+
+
+@api.put("/settings/sleep-schedule")
+def put_sleep_schedule():
+    """Nightly Sleeping window. Body:
+    {"enabled": true, "sleep_time": "00:00", "wake_time": "09:30"} — local
+    "HH:MM". Re-arms the schedule immediately; scene changes only, no alarm."""
+    body = request.get_json(silent=True) or {}
+    clean = {"enabled": bool(body.get("enabled", True))}
+    for key in ("sleep_time", "wake_time"):
+        value = body.get(key, db.DEFAULT_SLEEP_SCHEDULE[key])
+        if not isinstance(value, str) or not scenes.WAKE_TIME_RE.match(value):
+            return jsonify({"error": f"{key} must be HH:MM (24h), got {value!r}"}), 400
+        clean[key] = value
+    db.set_sleep_schedule(clean)
+    log.info("Nightly sleep schedule updated: %s", clean)
+    scenes.reschedule_bedtime()
     return jsonify(clean)
 
 
@@ -222,12 +272,16 @@ def device_power_history(device_id: int):
 
 @api.post("/devices/<int:device_id>/state")
 def device_state(device_id: int):
-    """Set a bulb zone's brightness/color/on-off. Body: any subset of
-    {"on": bool, "brightness": 0-255, "color": [r, g, b]}. Brightness stays
-    0-255 across the whole hub — the Shelly's 1-100 % scale is converted
-    inside app/shelly_bulb.py and nowhere else. Only meaningful in 'manual'
-    mode — in 'auto' mode the lighting job will overwrite brightness/on on
-    its next tick."""
+    """Set a bulb zone's brightness/colour/on-off. Body: any subset of
+    {"on": bool, "brightness": 0-255, "color": [r, g, b], "ct": kelvin}.
+    Brightness stays 0-255 across the whole hub — the Shelly's 1-100 % scale is
+    converted inside app/shelly_bulb.py and nowhere else. Only meaningful in
+    'manual' mode — in 'auto' mode the lighting job will overwrite
+    brightness/on on its next tick.
+
+    `ct` drives the bulb's white channel (the ambient control, and much
+    brighter); `color` drives the RGB dies (the custom-colour picker). They are
+    mutually exclusive, because the bulb lights one channel at a time."""
     device = db.get_device(device_id)
     if device is None or device["type"] != "bulb_zone":
         return jsonify({"error": "no such bulb zone"}), 404
@@ -249,12 +303,20 @@ def device_state(device_id: int):
     on = body.get("on")
     if on is not None and not isinstance(on, bool):
         return jsonify({"error": "on must be a boolean"}), 400
+    ct = body.get("ct")
+    if ct is not None and not (_num(ct) and shelly_bulb.CT_MIN_K <= ct <= shelly_bulb.CT_MAX_K):
+        return jsonify({"error": f"ct must be {shelly_bulb.CT_MIN_K}-{shelly_bulb.CT_MAX_K} "
+                                 "kelvin (the bulb's white channel refuses anything else)"}), 400
+    if color is not None and ct is not None:
+        return jsonify({"error": "send color or ct, not both — the bulb lights "
+                                 "either its RGB dies or its white channel"}), 400
 
     try:
         state = zone.set_state(
             on=on,
             brightness=int(brightness) if brightness is not None else None,
             color=[int(c) for c in color] if color is not None else None,
+            ct=int(ct) if ct is not None else None,
         )
     except BulbError as exc:
         log.error("Bulb set_state failed for device %d: %s", device_id, exc)
@@ -330,3 +392,42 @@ def arduino_command():
     if not serial_reader.send_command(command):
         return jsonify({"error": "serial port not connected"}), 502
     return jsonify({"sent": command})
+
+
+@api.get("/arduino/serial")
+def arduino_serial_status():
+    """Whether the reader currently holds the serial port."""
+    return jsonify({"paused": serial_reader.is_paused()})
+
+
+@api.post("/arduino/serial")
+def arduino_serial_control():
+    """Release or reclaim the serial port: {"paused": true, "minutes": 20}.
+
+    Reflashing the board (e.g. swapping in firmware/scd40_calibrate) needs the
+    port to itself. Pausing frees it without stopping the hub, so only sensor
+    ingest is interrupted. A pause always expires on its own — default 15
+    minutes, capped at MAX_PAUSE_S — since this runs unattended.
+    """
+    body = request.get_json(silent=True) or {}
+    if "paused" not in body:
+        return jsonify({"error": "body must be {\"paused\": true|false}"}), 400
+    if not body["paused"]:
+        serial_reader.resume()
+        return jsonify({"paused": False})
+
+    minutes = body.get("minutes", 15)
+    try:
+        seconds = int(float(minutes) * 60)
+    except (TypeError, ValueError):
+        return jsonify({"error": "minutes must be a number"}), 400
+    if seconds < 1:
+        return jsonify({"error": "minutes must be positive"}), 400
+
+    released = serial_reader.pause(seconds)
+    capped = min(seconds, serial_reader.MAX_PAUSE_S)
+    return jsonify({
+        "paused": True,
+        "port_released": released,
+        "resumes_in_minutes": round(capped / 60, 1),
+    })

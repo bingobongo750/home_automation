@@ -848,6 +848,14 @@ WantedBy=multi-user.target
 relies on its own directory being on `sys.path`. The `.env` file is found at the repo
 root regardless, since `config.py` resolves it relative to itself.
 
+> **`DB_PATH` must be absolute** (or left unset — the code default is
+> `<repo>/data/home.db`, resolved from the source tree rather than the CWD). Because
+> the service runs from `server/`, a relative `./data/home.db` resolves to
+> `server/data/home.db`: the hub silently creates and seeds a **second, empty**
+> database there and writes every reading into it, while the real one sits untouched.
+> Nothing errors — the dashboard looks fine, just with no history. Confirm with the
+> startup line, which logs the resolved path: `Database ready at /…/data/home.db`.
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now homehub
@@ -1100,7 +1108,7 @@ bring-up:
 |---|---|---|
 | `SERIAL_PORT` | `/dev/tty.usbmodem14101` | Mac: `/dev/tty.usb*`. Pi: use `/dev/serial/by-id/…` |
 | `SERIAL_BAUD` | `115200` | Must match the firmware |
-| `DB_PATH` | `./data/home.db` | On the Pi, anywhere on the card — the default is fine |
+| `DB_PATH` | `<repo>/data/home.db` | Anywhere on the card. **Absolute, or unset** — the service runs from `server/`, so a relative path lands in `server/data/` (§8.3) |
 | `MYSTROM_PLUG_IP` / `_PLUG2_IP` | `192.168.0.51` / `.52` | Seeds only — see §4.4 |
 | `MYSTROM_POLL_INTERVAL` | `10` (s) | Plug state + power sampling |
 | `SHELLY_CUPBOARD_IP` / `SHELLY_ROOM_LED_IP` | `192.168.0.61` / `.62` | Seeds only — see §5.4, §5.5 |

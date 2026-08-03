@@ -59,10 +59,12 @@ class SceneTestCase(unittest.TestCase):
             db.set_device_locked(device["id"], False)
         with scenes._lock:
             scenes._cancel_wake_locked()
+            scenes._cancel_bedtime_locked()
 
     def tearDown(self):
         with scenes._lock:
             scenes._cancel_wake_locked()
+            scenes._cancel_bedtime_locked()
 
     # ------------------------------------------------------------- helpers
 
@@ -274,6 +276,91 @@ class SceneTestCase(unittest.TestCase):
         scenes.init()
         self.assertIsNotNone(scenes._wake_timer)
         self.assertEqual(db.get_active_scene()["name"], "Sleeping")
+
+    # ------------------------------------------------------ nightly schedule
+
+    def test_sleep_schedule_defaults(self):
+        data = self.client.get("/api/settings/sleep-schedule").get_json()
+        self.assertEqual(data, {"enabled": True, "sleep_time": "00:00",
+                                "wake_time": "09:30"})
+
+    def test_sleep_schedule_validation(self):
+        for bad in ({"sleep_time": "24:00"}, {"wake_time": "9.30"},
+                    {"sleep_time": None}, {"wake_time": 930}):
+            body = {"enabled": True, "sleep_time": "00:00", "wake_time": "09:30", **bad}
+            self.assertEqual(
+                self.client.put("/api/settings/sleep-schedule", json=body).status_code,
+                400, bad)
+
+    def test_sleep_schedule_saved_and_armed(self):
+        resp = self.client.put("/api/settings/sleep-schedule",
+                               json={"enabled": True, "sleep_time": "23:15",
+                                     "wake_time": "06:45"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(db.get_sleep_schedule()["sleep_time"], "23:15")
+        self.assertIsNotNone(scenes._bedtime_timer)
+
+    def test_disabled_schedule_is_not_armed(self):
+        self.client.put("/api/settings/sleep-schedule",
+                        json={"enabled": False, "sleep_time": "00:00",
+                              "wake_time": "09:30"})
+        self.assertIsNone(scenes._bedtime_timer)
+
+    def test_bedtime_fire_activates_sleeping_with_wake(self):
+        scenes.reschedule_bedtime()
+        # invoke the pending timer's callback as if midnight had struck
+        scenes._fire_bedtime(scenes._bedtime_generation)
+        active = db.get_active_scene()
+        self.assertEqual(active["name"], "Sleeping")
+        self.assertEqual(active["wake_time"], "09:30")
+        self.assertEqual(lighting._suppressing_scene(), "Sleeping")
+        # the morning end of the window is armed by the usual wake machinery
+        self.assertIsNotNone(scenes._wake_timer)
+        # ...and tonight's timer has already come round for tomorrow
+        self.assertIsNotNone(scenes._bedtime_timer)
+
+    def test_nightly_schedule_leaves_a_locked_plug_alone(self):
+        # the lock is what stops the schedule cutting power to something that
+        # must stay on overnight — it has to hold for the automatic Sleeping
+        # exactly as it does for a manual one
+        locked_id = self.devices["Plug 2"]["id"]
+        self.plug("Plug 1").set_state(True)
+        self.plug("Plug 2").set_state(True)
+        db.set_device_locked(locked_id, True)
+
+        scenes.reschedule_bedtime()
+        scenes._fire_bedtime(scenes._bedtime_generation)
+
+        self.assertEqual(db.get_active_scene()["name"], "Sleeping")
+        self.assertTrue(self.plug("Plug 2").report()["relay_on"])   # untouched
+        self.assertFalse(self.plug("Plug 1").report()["relay_on"])  # rest applied
+        self.assertFalse(self.zone("Cupboard").state()["on"])
+
+    def test_locked_plug_refuses_any_toggle(self):
+        # 423 in both directions, not just off — the plug must be unlocked
+        # first, which is the only path that touches the lock
+        plug_id = self.devices["Plug 1"]["id"]
+        db.set_device_locked(plug_id, True)
+        for body in ({"on": False}, {"on": True}, {}):
+            resp = self.client.post(f"/api/devices/{plug_id}/toggle", json=body)
+            self.assertEqual(resp.status_code, 423, body)
+            self.assertTrue(resp.get_json()["locked"])
+
+    def test_stale_bedtime_fire_is_noop(self):
+        scenes.reschedule_bedtime()
+        stale_generation = scenes._bedtime_generation
+        self.activate("Away")
+        scenes.reschedule_bedtime()  # e.g. the schedule was edited meanwhile
+        scenes._fire_bedtime(stale_generation)
+        self.assertEqual(db.get_active_scene()["name"], "Away")
+
+    def test_manual_change_does_not_cancel_tomorrows_bedtime(self):
+        scenes.reschedule_bedtime()
+        # a manual scene change cancels a pending wake, but the recurring
+        # schedule has to survive it
+        self.activate("Away")
+        self.assertIsNone(scenes._wake_timer)
+        self.assertIsNotNone(scenes._bedtime_timer)
 
     def test_reactivating_sleeping_keeps_window_start(self):
         self.activate("Sleeping")

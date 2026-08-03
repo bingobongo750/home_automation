@@ -49,12 +49,35 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
 ## Lighting (bulb zones)
 
 - `POST /devices/:id/state` → *bulb_zone only.* Body: any subset of
-  `{"on": bool, "brightness": 0-255, "color": [r, g, b]}`.
+  `{"on": bool, "brightness": 0-255, "ct": 2700-6500, "color": [r, g, b]}`.
   Pushes a partial update to the zone and returns its resulting
-  `{on, brightness, color}`. `400` on out-of-range values, `502` if
-  the zone is unreachable. Only meaningful in `manual` mode — in `auto`
-  mode the lighting job (see below) overwrites `on`/`brightness` on its
-  next tick.
+  `{on, brightness, ct, color, color_mode}`. `400` on out-of-range values,
+  `502` if the zone is unreachable. Only meaningful in `manual` mode — in
+  `auto` mode the lighting job (see below) overwrites `on`/`brightness` on
+  its next tick.
+
+  **`ct` vs `color` — two channels, one lit at a time.** The bulb has a
+  dedicated white channel plus separate R/G/B dies. `ct` (kelvin) drives the
+  white channel and is what the dashboard's **Ambient** control sends;
+  `color` drives the RGB dies and is what **Custom** sends. `color_mode` in
+  the response (`"cct"` or `"rgb"`) says which is currently lit — it is
+  deliberately not called `mode`, which on a device row already means
+  manual/auto.
+
+  Sending both is a `400`: the winner would otherwise depend on the bulb's
+  current mode. A `brightness`-only update touches neither channel, so the
+  auto-lighting job never knocks a zone out of ambient white.
+
+  Ambient is CCT because that is where the light is. Measured at full
+  brightness on the real bulb: `ct` 2700 K draws **8.7 W**, the equivalent
+  warm white mixed from the RGB dies **5.5 W** — and the lumen gap is wider
+  than the wattage gap, since RGB dies are much less efficacious per watt
+  than a white phosphor.
+
+  The **2700-6500 K range is a hard device limit**, not a UI preference: the
+  bulb answers anything outside it with JSON-RPC `-103` rather than clamping.
+  The API rejects out-of-range `ct` up front; `shelly_bulb.clamp_ct()` is the
+  clamp for internal callers.
 
   Brightness is **0-255 across the whole hub**. The Shelly bulb's own scale
   is 1-100 %; that conversion happens inside `app/shelly_bulb.py` and
@@ -276,6 +299,19 @@ stage `stages` (for the hypnogram), and the night's `subjective` rating:
   dashboard's gear dialog uses this). Rejects `min >= max` with 400.
   A reading outside its range flags the widget with a HIGH/LOW chip, and
   the detail charts shade the out-of-range region as a faint red zone.
+- `GET /settings/lighting` → `{"lux_off": 50.0}` — the ambient level at which
+  a zone in `auto` mode is fully off. Brightness ramps **linearly** from
+  `LIGHTING_AUTO_BRIGHTNESS` at pitch dark down to nothing there, so this one
+  number sets the whole curve. Seeded from `LIGHTING_LUX_THRESHOLD`.
+- `PUT /settings/lighting` → same shape. `0` is allowed and means "never light
+  up from lux"; negative or non-numeric is 400. Pokes the lighting job so the
+  change lands on the next tick rather than up to an interval later.
+- `GET /settings/sleep-schedule` →
+  `{"enabled": true, "sleep_time": "00:00", "wake_time": "09:30"}` — the
+  recurring nightly Sleeping window, local "HH:MM".
+- `PUT /settings/sleep-schedule` → same shape; re-arms the schedule
+  immediately. Non-`HH:MM` times are 400. Switching Sleeping on and off is a
+  scene change only — never an alarm, no sound or notification.
 
 ## Wired lane passthrough
 
@@ -285,6 +321,42 @@ stage `stages` (for the hypnogram), and the night's `subjective` rating:
   MOSFET dimmer) and manual testing. Ambient lighting (bulb zones, above)
   does **not** use this — it's a WiFi device controlled directly, same lane
   as the myStrom plugs.
+
+- `GET /arduino/serial` → `{"paused": false}` — whether the reader currently
+  holds the serial port.
+
+- `POST /arduino/serial`, body `{"paused": true, "minutes": 20}` — release the
+  serial port so the board can be reflashed (e.g. swapping in
+  `firmware/scd40_calibrate`), without stopping the hub: lighting, scenes, the
+  planner and health keep running, only sensor ingest stops. Returns
+  `{"paused": true, "port_released": true, "resumes_in_minutes": 20}`;
+  `port_released` is false if the port was somehow still open ~4s later, which
+  means an upload would likely fail. `minutes` defaults to 15 and is capped at
+  2 hours — the pause **always** expires on its own, so a forgotten one can't
+  leave an unattended hub permanently mute. `{"paused": false}` resumes
+  immediately (idempotent).
+
+## Sensor plausibility bands
+
+Readings outside a physically plausible band are **logged and then stored
+anyway** (logging throttled to once a minute per metric). The band is advisory:
+ingest never drops a reading, so a faulty sensor is visible on the dashboard
+instead of looking like one that has gone quiet.
+
+| metric | accepted | why |
+|---|---|---|
+| `temp` | -40 – 85 | BME280 operating range |
+| `hum` | 0 – 100 | |
+| `lux` | 0 – 120000 | BH1750 saturates well below this |
+| `co2` | 300 – 10000 | real air floors out ~420; **0 = invalid channel** |
+| `motion` | 0 – 1 | |
+
+A failing sensor doesn't go quiet, it emits in-protocol nonsense — the SCD4x
+reports `CO2:0` when its CO2 channel is invalid. Those rows **do** skew
+averages, alert bands, the "typical day" profile and the overnight CO2 delta
+for as long as the fault lasts; that is accepted deliberately, because the
+alternative hid the fault from the one screen used to diagnose it. See
+`METRIC_RANGE` in `app/serial_reader.py`.
 
 ## Errors
 

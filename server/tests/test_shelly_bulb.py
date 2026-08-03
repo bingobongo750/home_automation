@@ -18,7 +18,8 @@ os.environ["MOCK_HARDWARE"] = "1"
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="hub-bulb-test-"), "test.db")
 
 from app.shelly_bulb import (  # noqa: E402
-    DEFAULT_COLOR, MockShellyBulb, ShellyBulb, _to_255, _to_pct, make_bulb,
+    CT_MAX_K, CT_MIN_K, DEFAULT_COLOR, DEFAULT_CT_K, MockShellyBulb, ShellyBulb,
+    _to_255, _to_pct, make_bulb,
 )
 
 
@@ -80,6 +81,39 @@ class RpcShapeTest(unittest.TestCase):
         self.assertEqual(params["rgb"], [10, 20, 30])
         self.assertEqual(params["mode"], "rgb")
 
+    def test_setting_ct_forces_cct_mode(self):
+        """Ambient drives the white channel — the whole point of the split."""
+        bulb = FakeTransport()
+        bulb.set_state(ct=3000)
+        _, params = bulb.calls[0]
+        self.assertEqual(params["ct"], 3000)
+        self.assertEqual(params["mode"], "cct")
+        self.assertNotIn("rgb", params)
+
+    def test_ct_is_clamped_to_what_the_bulb_accepts(self):
+        # The real bulb answers -103 for anything outside 2700-6500 rather
+        # than clamping, so an out-of-range ct must never reach it.
+        for sent, expected in ((1800, CT_MIN_K), (9000, CT_MAX_K), (4000, 4000)):
+            bulb = FakeTransport()
+            bulb.set_state(ct=sent)
+            self.assertEqual(bulb.calls[0][1]["ct"], expected)
+
+    def test_color_and_ct_together_are_refused(self):
+        bulb = FakeTransport()
+        with self.assertRaises(ValueError):
+            bulb.set_state(color=[1, 2, 3], ct=3000)
+        self.assertEqual(bulb.calls, [])   # nothing sent
+
+    def test_brightness_alone_does_not_disturb_the_channel(self):
+        """The auto-lighting job pushes brightness only; it must not knock a
+        zone out of ambient white into RGB."""
+        bulb = FakeTransport()
+        bulb.set_state(brightness=200)
+        _, params = bulb.calls[0]
+        self.assertNotIn("mode", params)
+        self.assertNotIn("rgb", params)
+        self.assertNotIn("ct", params)
+
     def test_partial_update_sends_only_the_named_fields(self):
         bulb = FakeTransport()
         bulb.set_state(on=False)
@@ -94,12 +128,15 @@ class RpcShapeTest(unittest.TestCase):
     def test_state_unwraps_shelly_fields_into_hub_shape(self):
         bulb = FakeTransport(status={"output": True, "brightness": 50,
                                      "rgb": [1, 2, 3], "ct": 3000, "mode": "rgb"})
-        self.assertEqual(bulb.state(), {"on": True, "brightness": 128, "color": [1, 2, 3]})
+        self.assertEqual(bulb.state(), {"on": True, "brightness": 128,
+                                        "color": [1, 2, 3], "ct": 3000,
+                                        "color_mode": "rgb"})
 
     def test_state_survives_a_sparse_status(self):
         bulb = FakeTransport(status={})
         self.assertEqual(bulb.state(),
-                         {"on": False, "brightness": 0, "color": list(DEFAULT_COLOR)})
+                         {"on": False, "brightness": 0, "color": list(DEFAULT_COLOR),
+                          "ct": DEFAULT_CT_K, "color_mode": "cct"})
 
 
 class MockBulbTest(unittest.TestCase):
