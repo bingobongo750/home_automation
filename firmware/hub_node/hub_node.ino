@@ -134,6 +134,40 @@ void scanI2C() {
   Serial.println();
 }
 
+// Take one BME280 reading in FORCED mode, then leave the sensor asleep.
+//
+// WHY NOT THE DEFAULTS: Adafruit's begin() leaves MODE_NORMAL with x16
+// oversampling on all three channels and a 0.5 ms standby — converting
+// essentially continuously at maximum rate. That warms the die and the
+// breakout's own regulator, and the heat conducts a few millimetres to the
+// sensing element, which then reports it as room temperature. Those defaults
+// are chosen for out-of-the-box responsiveness, not accuracy. Forced mode at
+// x1 on a 5 s cadence is Bosch's own "weather monitoring" recommendation and
+// leaves the part asleep between reads.
+//
+// Pressure is SAMPLING_NONE because nothing in the hub reads it; skipping it
+// shortens each conversion. Temperature and humidity are unaffected (humidity
+// compensation needs temperature, not pressure).
+//
+// WHY NOT takeForcedMeasurement(): it polls the status register in an
+// UNBOUNDED `while` loop. A failed I2C read there returns 0xFF, whose
+// "measuring" bit is set, so a wedged bus hangs the sketch forever — producing
+// exactly nothing on serial, which is indistinguishable from a dead board. On a
+// box that runs unattended, a bounded wait that might occasionally return a
+// stale value is far better than a silent lockup. Re-issuing setSampling()
+// writes ctrl_meas with MODE_FORCED, and that write is what starts a single
+// conversion.
+static void bmeMeasure() {
+  bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                  Adafruit_BME280::SAMPLING_X1,    // temperature
+                  Adafruit_BME280::SAMPLING_NONE,  // pressure — unused
+                  Adafruit_BME280::SAMPLING_X1,    // humidity
+                  Adafruit_BME280::FILTER_OFF);
+  // Datasheet t_measure,max for x1 T + x1 H is ~6.4 ms. 15 ms is comfortable
+  // and still ~0.3 % duty cycle at a 5 s report interval.
+  delay(15);
+}
+
 void setup() {
   Serial.begin(115200);
   rxBuffer.reserve(32);
@@ -153,6 +187,9 @@ void setup() {
 
   // Try both common BME280 addresses (0x76 on most clone breakouts, 0x77 Adafruit)
   bmeOk = bme.begin(0x76) || bme.begin(0x77);
+  // Drop straight out of the library's free-running default (see bmeMeasure)
+  // so the sensor is not self-heating while the other drivers start up.
+  if (bmeOk) bmeMeasure();
   bhOk = lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE);
   scdOk = co2Sensor.begin();  // starts periodic measurement by default
 
@@ -184,6 +221,7 @@ void loop() {
 
 void reportSensors() {
   if (bmeOk) {
+    bmeMeasure();  // forced mode sleeps between reads — wake it for this one
     Serial.print(F("TEMP:"));
     Serial.println(bme.readTemperature(), 1);
     Serial.print(F("HUM:"));

@@ -34,7 +34,8 @@ commission.
 - [6. Stage 5 — full verification on the Mac](#6-stage-5--full-verification-on-the-mac)
 - [7. Stage 6 — the Raspberry Pi 4](#7-stage-6--the-raspberry-pi-4)
 - [8. Day 2 — making changes](#8-day-2--making-changes)
-- [9. Troubleshooting](#9-troubleshooting)
+- [9. The two presence Shortcuts (iPhone)](#9-the-two-presence-shortcuts-iphone)
+- [10. Troubleshooting](#10-troubleshooting)
 - [Appendix A — environment variables](#appendix-a--environment-variables)
 - [Appendix B — serial protocol card](#appendix-b--serial-protocol-card)
 - [Appendix C — useful one-liners](#appendix-c--useful-one-liners)
@@ -1168,7 +1169,102 @@ Return to the tip with `git checkout main`.
 
 ---
 
-## 9. Troubleshooting
+## 9. The two presence Shortcuts (iPhone)
+
+Automatic **Away** when you leave, and **Day** or **Sleeping** when you get back.
+The hub side is built (`app/presence.py`); this is the phone half.
+
+**Prerequisites**
+
+- Tailscale on the iPhone, signed in, connected. Off home Wi-Fi, `hub:8000`
+  resolves *only* over the tailnet — a departure fired with Tailscale off is
+  simply lost.
+- Confirm the endpoint answers before building anything. In Safari on the phone
+  you can only issue GETs, so check the read side:
+  `http://hub:8000/api/presence` should return
+  `{"state":"home","departure_pending":false,...}`.
+
+### 9.1 Shortcut 1 — Departure
+
+**Shortcuts app → Automation tab → + → New Automation**
+
+1. Scroll to **Location** → **I Leave**
+2. **Location**: choose your home address. Leave the radius at its default —
+   a tight radius fires while you are still in the building.
+3. **Time**: Any time. **Next**.
+4. **New Blank Automation**
+5. Add action → search **Wait** → set it to **30 seconds**
+6. Add action → search **Get Contents of URL**
+7. Set the URL to:
+   ```
+   http://hub:8000/api/presence/departed
+   ```
+8. Tap the **▸ Show More** arrow on that action → **Method: POST**
+   Leave Headers and Request Body empty.
+9. **Done**, then on the automation's page turn **Run Immediately** on and
+   **Notify When Run** off.
+
+> **Why the 30-second Wait.** At the moment you leave, the phone is handing off
+> from Wi-Fi to cellular and Tailscale has not necessarily re-established.
+> Firing immediately is the single most likely way for this request to vanish.
+
+### 9.2 Shortcut 2 — Arrival
+
+Same, with three differences:
+
+1. **Location** → **I Arrive** (same address)
+2. **No Wait action** — you are walking through the door and want the lights on
+3. URL:
+   ```
+   http://hub:8000/api/presence/arrived
+   ```
+   Method **POST**, again with **Run Immediately** on.
+
+### 9.3 What the hub does with them
+
+You do **not** need any time-of-day logic in the Shortcuts — that is the whole
+point of the split. The phone says "left" or "arrived"; the host decides.
+
+| You do | The hub does |
+|---|---|
+| Leave | Waits `PRESENCE_DEPART_GRACE_S` (120 s), then activates **Away** |
+| Come back within those 120 s | Cancels silently — nothing was applied, so nothing to undo |
+| Arrive, daytime | **Day**, plus the away summary |
+| Arrive, inside your nightly sleep window | **Sleeping**, carrying the schedule's own wake time, so you still get the morning summary |
+| Arrive while the house is already Day or Sleeping | **Nothing** — presence only ever ends Away |
+| Stay away overnight | Stays Away. The nightly schedule will not put an empty flat to bed |
+
+### 9.4 Testing it without leaving the house
+
+From the Mac, on the tailnet:
+
+```bash
+curl -X POST http://hub:8000/api/presence/departed   # Away in 120s
+curl -s   http://hub:8000/api/presence               # departure_pending: true
+curl -X POST http://hub:8000/api/presence/arrived    # cancels it silently
+```
+
+To see a real away summary you need an absence longer than
+`PRESENCE_SUMMARY_MIN_S` (10 min), because shorter ones deliberately produce
+nothing.
+
+### 9.5 When it misbehaves
+
+- **Nothing happens on leaving.** Almost always Tailscale being off or asleep on
+  the phone. Open the Tailscale app, confirm it is connected, then check
+  `GET /api/presence` — `last_event` and `last_event_at` tell you whether the
+  POST ever arrived.
+- **iOS silently disabling the automation.** Check the Automation tab; iOS
+  sometimes turns off automations that error repeatedly.
+- **It fires while you are still home.** Your geofence radius is too small.
+  Widen it, or use a nearby landmark instead of your exact address.
+- **Neither failure is dangerous.** A lost departure leaves the house in Day
+  while you are out; a lost arrival means you come home to an Away house and fix
+  it with the dashboard MODE switch. Shortcuts does not retry, and that is fine.
+
+---
+
+## 10. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|

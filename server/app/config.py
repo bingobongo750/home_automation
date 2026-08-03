@@ -44,6 +44,27 @@ LIGHTING_POLL_INTERVAL = float(os.environ.get("LIGHTING_POLL_INTERVAL", "30"))
 LIGHTING_LUX_THRESHOLD = float(os.environ.get("LIGHTING_LUX_THRESHOLD", "50"))
 LIGHTING_AUTO_BRIGHTNESS = int(os.environ.get("LIGHTING_AUTO_BRIGHTNESS", "180"))
 
+# Presence (see docs/presence-design.md). A phone posts departure/arrival; the
+# host decides the scene.
+#   DEPART_GRACE  a departure is confirmed only after this long, so a bouncing
+#                 geofence cannot strobe the room. Arrival has no grace — the
+#                 point is lights on when you walk in.
+#   ARRIVAL_TRIM  the away summary window ends this long BEFORE the detected
+#                 arrival. You reach the door before the hub knows, so the last
+#                 stretch is you: PIR, CO2, lux and plug draw all read as
+#                 "disturbances" otherwise, and every homecoming looks like a
+#                 break-in. Erring long costs a couple of minutes of an absence
+#                 that was already hours.
+#   SUMMARY_MIN   shorter absences produce no summary at all.
+#   DISTURBANCE_COOLDOWN  repeated detections within this gap are ONE event. A
+#                 PIR emits a sample per cycle while it sees movement, so
+#                 counting raw rows reports "47 disturbances" for one person
+#                 crossing the room.
+PRESENCE_DEPART_GRACE_S = int(os.environ.get("PRESENCE_DEPART_GRACE_S", "120"))
+PRESENCE_ARRIVAL_TRIM_S = int(os.environ.get("PRESENCE_ARRIVAL_TRIM_S", "120"))
+PRESENCE_SUMMARY_MIN_S = int(os.environ.get("PRESENCE_SUMMARY_MIN_S", "600"))
+DISTURBANCE_COOLDOWN_S = int(os.environ.get("DISTURBANCE_COOLDOWN_S", "300"))
+
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8000"))
 MOCK_HARDWARE = os.environ.get("MOCK_HARDWARE", "0") == "1"

@@ -6,7 +6,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from . import db, lighting, poller, scenes, serial_reader, shelly_bulb
+from . import db, lighting, poller, presence, scenes, serial_reader, shelly_bulb
 from .mystrom import PlugError
 from .shelly_bulb import BulbError
 
@@ -379,6 +379,35 @@ def scene_last_summary():
     """Most recent Sleeping->Day overnight summary, or {"summary": null}
     before the first one exists."""
     return jsonify({"summary": db.get_setting("last_sleep_summary")})
+
+
+@api.get("/scenes/last-away-summary")
+def scene_last_away_summary():
+    """Most recent Away -> (Day|Sleeping) disturbance summary, or
+    {"summary": null} before the first one exists."""
+    return jsonify({"summary": db.get_setting("last_away_summary")})
+
+
+@api.get("/presence")
+def presence_state():
+    """Current presence, plus whether a departure is waiting out its grace."""
+    return jsonify(presence.state())
+
+
+@api.post("/presence/departed")
+def presence_departed():
+    """Phone left the geofence. Deliberately no request body, so the iPhone
+    Shortcut is a single action with just a URL. Away is applied only after
+    PRESENCE_DEPART_GRACE_S, so a bouncing geofence cannot strobe the room."""
+    return jsonify(presence.departed())
+
+
+@api.post("/presence/arrived")
+def presence_arrived():
+    """Phone came back. Applied immediately, and only ever ends Away — a house
+    in Day or Sleeping is left alone, so a spurious event cannot override a
+    scene chosen by hand."""
+    return jsonify(presence.arrived())
 
 
 @api.post("/arduino/command")

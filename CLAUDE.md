@@ -225,6 +225,36 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
 - Scene behavior is covered by `server/tests/` (stdlib unittest, runs fully
   under `MOCK_HARDWARE=1`): `cd server && python3 -m unittest discover -s tests`.
 
+## Presence (automatic Away)
+
+- `app/presence.py`, built to `docs/presence-design.md`. Two iPhone Shortcuts POST
+  departure/arrival; **the phone reports presence, the host decides the scene**, so the
+  phone holds no copy of the sleep schedule and changing that schedule never means
+  editing a Shortcut. Imports `scenes`, never the reverse.
+- **Away is the strongest state.** Nothing automatic overrides it — `_fire_bedtime()`
+  skips an Away house (otherwise the nightly timer puts an empty flat into Sleeping and
+  the morning wake then switches it to Day, lights on in a house nobody is in), and
+  activating Away already cancels a pending wake. Only an arrival or a manual pick ends it.
+- **Departure is delayed, arrival is immediate.** A departure applies only after
+  `PRESENCE_DEPART_GRACE_S`, so a bouncing geofence cannot strobe the room; a second
+  departure does not restart the countdown. Arrival gets no grace — the point is lights
+  on when you walk in — and **only ever ends Away**: a house in Day or Sleeping is left
+  alone, which is what stops a stray geofence event overriding a scene chosen by hand.
+- Arrival resolves to **Day or Sleeping** from the stored nightly window (wrap-past-
+  midnight handled), carrying the schedule's own `wake_time` when it lands inside, so
+  getting home at 02:00 still produces the morning summary.
+- **The away summary's window ends `PRESENCE_ARRIVAL_TRIM_S` before the detected
+  arrival.** You reach the door before the hub knows, and the PIR/CO2/lux/plug draw in
+  that gap are all you — untrimmed, every homecoming reads as a break-in and the summary
+  becomes noise. Absences under `PRESENCE_SUMMARY_MIN_S` produce no summary at all.
+- **Repeated detections collapse into events** (`scenes.cluster_events`,
+  `DISTURBANCE_COOLDOWN_S`). A PIR emits a sample per cycle while it sees movement, so
+  counting raw rows would report "47 disturbances" for one person crossing the room.
+- CO2 is a second, independent occupancy signal (a person sitting still defeats a PIR,
+  not CO2) and is **omitted rather than zeroed** when the window holds no valid reading —
+  a broken sensor must never render as "all clear".
+- Covered by `server/tests/test_presence.py`.
+
 ## Planner (calendar + to-do)
 
 - A **self-contained module**, `app/planner.py`: its own tables (`events`,
@@ -378,6 +408,9 @@ keep this list in sync when endpoints change:
 - `POST /api/scenes/:name/activate` — activate a scene; body may carry `wake_time` ("HH:MM") when activating Sleeping
 - `GET /api/scenes/active` — current scene + activation time + pending wake time (if set)
 - `GET /api/scenes/last-summary` — most recent Sleeping→Day overnight summary (null before the first); carries a `planner` section (today's events + overdue/high-priority tasks)
+- `GET /api/scenes/last-away-summary` — most recent Away→(Day|Sleeping) disturbance summary (null before the first)
+- `GET /api/presence` — presence state + whether a departure is waiting out its grace
+- `POST /api/presence/departed` / `POST /api/presence/arrived` — phone-driven presence (no body, so an iPhone Shortcut is one action); see `app/presence.py` and `docs/presence-design.md`
 - `GET /api/events?from=YYYY-MM-DD&range=7d` — calendar events in a date window, recurring ones expanded into occurrences
 - `POST /api/events`, `PUT /api/events/:id`, `DELETE /api/events/:id` — event CRUD (PUT is partial)
 - `POST /api/health/ingest` — Health Auto Export JSON push → raw health tables (RR

@@ -45,7 +45,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from . import db, health, lighting, planner, poller
+from . import config, db, health, lighting, planner, poller
 from .mystrom import PlugError
 from .shelly_bulb import BulbError
 
@@ -235,6 +235,17 @@ def _fire_bedtime(generation: int) -> None:
             schedule = db.get_sleep_schedule()
             if not schedule.get("enabled"):
                 return
+            # Away is the strongest state: nothing automatic may override it.
+            # Without this the nightly timer puts an empty flat into Sleeping,
+            # and the morning wake then switches it to Day — lights and plugs
+            # on in a house nobody is in, the exact opposite of the intent.
+            # Same principle as init(), which refuses to back-fill a window it
+            # slept through rather than overriding a deliberate Away.
+            active = db.get_active_scene()
+            if active and active["name"] == "Away":
+                log.info("Nightly schedule: staying in Away (house is empty) — "
+                         "not switching to Sleeping")
+                return
             wake_time = schedule["wake_time"]
             if not WAKE_TIME_RE.match(wake_time):
                 log.error("Nightly sleep schedule has a bad wake_time %r — "
@@ -386,6 +397,88 @@ def _apply_zone(device: dict, target: dict) -> dict:
     except ValueError as exc:   # malformed hand-edited scene row
         return {"device": device["name"], "ok": False, "error": str(exc)}
     return {"device": device["name"], "ok": True}
+
+
+# ------------------------------------------------------------- away summary
+
+def cluster_events(timestamps: list, gap_s: float) -> list[dict]:
+    """Collapse a stream of detections into events.
+
+    A PIR does not produce "a detection" — it produces a reading every cycle
+    for as long as it keeps seeing movement, so one person crossing the room is
+    dozens of rows. Counting rows would report "47 disturbances" for a single
+    event and bury the only distinction that matters: one disturbance or
+    several separate ones.
+
+    Detections less than gap_s apart are one event; a longer gap starts a new
+    one. Returns [{"start", "end", "samples"}] in chronological order.
+    """
+    events: list[dict] = []
+    for ts in sorted(timestamps):
+        if events and ts - events[-1]["end"] < gap_s:
+            events[-1]["end"] = ts
+            events[-1]["samples"] += 1
+        else:
+            events.append({"start": ts, "end": ts, "samples": 1})
+    return events
+
+
+def _compute_away_summary(since: float, until: float) -> dict:
+    """What happened while the house was empty — computed once at the
+    Away -> (Day|Sleeping) transition, stored as settings.last_away_summary.
+
+    Deliberately different content from the overnight summary: that one is
+    about sleep quality, this one is about whether anything happened in a room
+    nobody was in. `until` has already been trimmed by the caller.
+    """
+    co2_start, co2_end = db.metric_window_endpoints("co2", since, until)
+    co2_delta = (round(co2_end - co2_start)
+                 if co2_start is not None and co2_end is not None else None)
+    co2_stats = db.metric_window_stats("co2", since, until)
+    co2_rose = co2_delta is not None and co2_delta >= CO2_RISE_FLAG_PPM
+
+    motion_ts = [e["ts"] for e in db.motion_events(since, limit=2000, until=until)]
+    motion_events = cluster_events(motion_ts, config.DISTURBANCE_COOLDOWN_S)
+
+    plugs = []
+    for device in db.list_devices():
+        if device["type"] != "wifi_plug":
+            continue
+        stats = db.plug_window_summary(device["id"], since, until)
+        stats["name"] = device["name"]
+        plugs.append(stats)
+
+    lux_stats = db.metric_window_stats("lux", since, until)
+
+    return {
+        "from": since,
+        "to": until,
+        "duration_s": round(until - since),
+        # The one field the dashboard leads on. "Nothing happened" must be as
+        # clear as the alarming case, so this is an explicit boolean rather
+        # than something the frontend infers from empty lists.
+        "disturbed": bool(motion_events) or co2_rose or any(p["changed"] for p in plugs),
+        "motion": {
+            "events": len(motion_events),
+            "samples": len(motion_ts),
+            "times": [e["start"] for e in motion_events[:20]],
+        },
+        # A person sitting still defeats a PIR, which senses heat *movement*
+        # across its field. They cannot defeat CO2. The two fail differently,
+        # which is exactly why both are here. Omitted entirely when the window
+        # holds no valid CO2 — a broken sensor must not read as "all clear".
+        "co2": None if co2_stats["max"] is None else {
+            "max": round(co2_stats["max"]),
+            "start": round(co2_start) if co2_start is not None else None,
+            "end": round(co2_end) if co2_end is not None else None,
+            "delta": co2_delta,
+            "rose_significantly": co2_rose,
+        },
+        "lux": {"max": lux_stats["max"]},
+        "temp": db.metric_window_stats("temp", since, until),
+        "hum": db.metric_window_stats("hum", since, until),
+        "plugs": plugs,
+    }
 
 
 # ------------------------------------------------------------ morning summary

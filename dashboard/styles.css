@@ -561,6 +561,20 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   color: var(--ink-2);
 }
 
+/* The away card's one-line verdict. Reassurance is the common case and must
+   read as calmly as the alert reads sharply — so the quiet state is plain ink
+   and only .alert borrows the warning colour. */
+.away-verdict {
+  margin: 8px 0 2px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.away-verdict.alert {
+  color: var(--warn, #d29455);
+  font-weight: 600;
+}
+
 .summary-dismiss {
   font-size: 18px;
   line-height: 1;

@@ -4,8 +4,14 @@ Design for phone-driven presence: leaving the house puts it in **Away**, coming
 back puts it in **Day** or **Sleeping** depending on the time, and the return
 shows a summary of anything that happened while nobody was in.
 
-Status: **design only, nothing built.** Written against `app/scenes.py` as of
-`8362f48`.
+Status: **built.** `app/presence.py`, the `_fire_bedtime` Away guard, the away
+summary and its dashboard card are all implemented and covered by
+`server/tests/test_presence.py`.
+
+Still outstanding from this document: **§9's Day and Sleeping halves** — motion
+is not yet suppressed on the Board during Day, and the overnight summary still
+counts raw motion rows rather than clustered awakenings. §9's Away half is done,
+since the away summary uses the clustering.
 
 ---
 

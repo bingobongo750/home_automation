@@ -60,6 +60,24 @@
   <section class="zone">
     <h2 class="zone-label">Room conditions</h2>
 
+    <!-- Away summary: what happened while the house was empty, shown after an
+         Away -> (Day|Sleeping) transition. Sits ABOVE the overnight summary
+         because it is the one that might need acting on. Unlike that card it
+         shows in any scene — arriving at 02:00 into Sleeping should still
+         leave it waiting in the morning. -->
+    <article class="card summary-card away-summary-card" id="away-summary-card" hidden>
+      <header class="card-head">
+        <h3 class="card-label">While you were out</h3>
+        <span class="head-right">
+          <code class="wire-key" id="away-summary-flag">AWAY</code>
+          <button class="summary-dismiss" id="away-summary-dismiss" aria-label="Dismiss away summary">×</button>
+        </span>
+      </header>
+      <p class="summary-window" id="away-summary-window"></p>
+      <p class="away-verdict" id="away-summary-verdict"></p>
+      <dl class="stat-row" id="away-summary-stats"></dl>
+    </article>
+
     <!-- Overnight summary: shown after a Sleeping -> Day transition (wake
          timer or manual switch), filled by app.js from
          /api/scenes/last-summary; the × dismisses it until the next night. -->

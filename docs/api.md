@@ -136,6 +136,53 @@ backend restarts.
   transition like the sensor stats. Summaries stored before the planner
   existed have no `planner` key.
 
+## Presence
+
+Two iPhone Shortcuts drive these; see `docs/presence-design.md` for the design
+and `MANUAL.md` §9 for the exact Shortcut setup. **The phone reports presence,
+the host decides the scene** — so the phone holds no copy of the sleep schedule,
+and changing that schedule never means editing a Shortcut.
+
+- `POST /presence/departed` → registers a departure. **No request body**, so the
+  Shortcut is a single action with just a URL. Away is applied only after
+  `PRESENCE_DEPART_GRACE_S` (default 120 s), so a bouncing geofence cannot
+  strobe the room; a second departure while one is pending does **not** restart
+  the countdown. Returns `{"presence", "applied", "reason",
+  "pending_departure_at"}`.
+
+- `POST /presence/arrived` → registers a return, applied immediately. **Only
+  ever ends Away**: a house in Day or Sleeping is left untouched, which is what
+  stops a stray geofence event from overriding a scene chosen by hand. Resolves
+  to **Day or Sleeping** from the stored nightly window (handling a window that
+  wraps past midnight), carrying the schedule's own `wake_time` when it lands
+  inside — so getting home at 02:00 still yields the morning summary. Returns
+  `{"presence", "scene", "applied", "reason", "summary_generated"}`.
+
+- `GET /presence` → `{"state": "home"|"away", "since", "last_event",
+  "last_event_at", "departure_pending"}`.
+
+- `GET /scenes/last-away-summary` → `{"summary": null}` or the most recent
+  Away→(Day|Sleeping) disturbance summary:
+  `{"from", "to", "duration_s", "disturbed", "motion": {events, samples, times},
+  "co2": {max, start, end, delta, rose_significantly} | null,
+  "lux": {max}, "temp": {...}, "hum": {...},
+  "plugs": [{name, max_watts, start_on, end_on, changed}]}`
+
+  `disturbed` is the field to lead on — true when a motion *event* occurred, or
+  CO₂ rose ≥ 200 ppm, or a plug's relay state differs end-to-end.
+
+  **Two things about this window are deliberate.** It ends
+  `PRESENCE_ARRIVAL_TRIM_S` (default 120 s) *before* the detected arrival,
+  because you reach the door before the hub knows and the PIR, CO₂, lux and plug
+  draw in that gap are all you — untrimmed, every homecoming reads as a
+  break-in. And `motion.events` counts **clustered** events, not rows: a PIR
+  emits a sample per cycle while it sees movement, so raw counting would report
+  "47 disturbances" for one person crossing the room (`samples` keeps the raw
+  figure). Absences shorter than `PRESENCE_SUMMARY_MIN_S` produce no summary.
+
+  `co2` is `null` rather than zeroed when the window holds no valid reading — a
+  broken sensor must never render as "all clear".
+
 ## Planner (calendar + to-do)
 
 A self-contained module (`app/planner.py` — own tables, own blueprint);

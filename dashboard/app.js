@@ -210,6 +210,9 @@ async function pollFast() {
     activeScene = scene;
     renderScene();
     if (prevSceneName && prevSceneName !== scene.name && scene.name === "Day") loadSummary();
+    // Leaving Away means a fresh disturbance summary may be waiting. Checked
+    // on the transition rather than every poll, same as the overnight one.
+    if (prevSceneName === "Away" && scene.name !== "Away") loadAwaySummary();
     renderTicker(latest);
     renderMetricValues(latest);
     renderPIR(latest);
@@ -954,6 +957,86 @@ sleepForm.addEventListener("submit", async (ev) => {
     sleepNote.textContent = err.message || "Couldn't activate — is the backend up?";
     sleepNote.className = "save-note err";
   }
+});
+
+/* ------------------------------------------------------ away summary card
+   What happened while the house was empty. Unlike the overnight card this one
+   shows in any scene: arriving at 02:00 into Sleeping should still leave it
+   waiting for you in the morning. Dismissal is per-summary in localStorage,
+   keyed by the window's end timestamp. */
+
+const awayCard = document.getElementById("away-summary-card");
+const AWAY_DISMISS_KEY = "hub-away-summary-dismissed";
+let lastAwaySummary = null;
+
+async function loadAwaySummary() {
+  try {
+    lastAwaySummary = (await getJSON("/api/scenes/last-away-summary")).summary;
+  } catch {
+    return; // keep whatever we had; next poll retries
+  }
+  renderAwaySummaryCard();
+}
+
+function renderAwaySummaryCard() {
+  const s = lastAwaySummary;
+  const show = s && localStorage.getItem(AWAY_DISMISS_KEY) !== String(s.to);
+  if (!show) {
+    awayCard.hidden = true;
+    return;
+  }
+
+  const hours = s.duration_s / 3600;
+  const span = hours >= 1 ? `${hours.toFixed(1)} h` : `${Math.round(s.duration_s / 60)} min`;
+  document.getElementById("away-summary-window").textContent =
+    `Away ${axisTime(s.from, 0)} → ${axisTime(s.to, 0)} · ${span}`;
+
+  // "Nothing happened" has to read as clearly as the alarming case, so it is
+  // stated outright rather than left as an absence of rows.
+  const verdict = document.getElementById("away-summary-verdict");
+  verdict.textContent = s.disturbed
+    ? "Something moved while you were out."
+    : "Nothing stirred.";
+  verdict.classList.toggle("alert", !!s.disturbed);
+  document.getElementById("away-summary-flag").textContent = s.disturbed ? "ALERT" : "QUIET";
+
+  const stats = document.getElementById("away-summary-stats");
+  stats.textContent = "";
+
+  const m = s.motion;
+  const motionSub = m.events === 0 ? "no movement"
+    : `first at ${axisTime(m.times[0], 0)}`;
+  stats.append(summaryStat("Movement", m.events, m.events === 1 ? "event" : "events",
+                           motionSub, m.events > 0));
+
+  // Omitted rather than zeroed when no valid CO2 exists in the window — a dead
+  // sensor must never render as "all clear".
+  if (s.co2) {
+    stats.append(summaryStat("CO₂ peak", s.co2.max, "ppm",
+                             s.co2.delta === null ? null : `${s.co2.start} → ${s.co2.end} ppm`,
+                             s.co2.rose_significantly));
+  }
+  if (s.lux && s.lux.max !== null) {
+    stats.append(summaryStat("Light peak", s.lux.max, "lx", null, false));
+  }
+  const changed = (s.plugs || []).filter((p) => p.changed);
+  if (s.plugs && s.plugs.length) {
+    stats.append(summaryStat("Plugs", changed.length ? changed.length : "—",
+                             changed.length ? "changed" : null,
+                             changed.length ? changed.map((p) => p.name).join(", ")
+                                            : "unchanged",
+                             changed.length > 0));
+  }
+  stats.append(summaryStat("Temp", s.temp.avg, "°C",
+                           s.temp.min === null ? null : `min ${s.temp.min} · max ${s.temp.max}`,
+                           false));
+
+  awayCard.hidden = false;
+}
+
+document.getElementById("away-summary-dismiss").addEventListener("click", () => {
+  if (lastAwaySummary) localStorage.setItem(AWAY_DISMISS_KEY, String(lastAwaySummary.to));
+  awayCard.hidden = true;
 });
 
 /* ------------------------------------------------- overnight summary card
@@ -3581,6 +3664,7 @@ document.querySelectorAll(".widget[data-widget='metric'], .widget[data-widget='m
   await loadThresholds();
   await pollFast();     // also sets activeScene, which the summary card needs
   await loadSummary();
+  await loadAwaySummary();
   refreshAllSparks();
   // deep-link: /#temp, /#co2, /#motion, /#power-1 (device id) opens that
   // detail; an optional range suffix like /#temp:3h preselects the range;

@@ -288,6 +288,27 @@ def set_sleep_schedule(schedule: dict) -> None:
     set_setting("sleep_schedule", schedule)
 
 
+DEFAULT_PRESENCE = {"state": "home", "since": None,
+                    "last_event": None, "last_event_at": None}
+
+
+def get_presence() -> dict:
+    """{"state": "home"|"away", "since", "last_event", "last_event_at"}.
+
+    Persisted so presence survives a restart. A never-configured hub counts as
+    "home" — the safe default, since the alternative is an empty-house scene on
+    a box that has simply never been told anything (see app/presence.py)."""
+    saved = get_setting("presence") or {}
+    return {key: saved.get(key, default) for key, default in DEFAULT_PRESENCE.items()}
+
+
+def set_presence(state: str, since: float | None,
+                 last_event: str | None, last_event_at: float | None) -> None:
+    set_setting("presence", {"state": state, "since": since,
+                             "last_event": last_event,
+                             "last_event_at": last_event_at})
+
+
 def get_active_scene() -> dict | None:
     """{"name", "activated_at", "wake_time", "wake_at"} for the current house
     mode, or None if no scene has ever been activated (the backend treats
@@ -452,6 +473,36 @@ def motion_events(since: float, limit: int = 50, until: float | None = None) -> 
             (since, until if until is not None else time.time(), limit),
         ).fetchall()
     return [{"ts": r["ts"]} for r in rows]
+
+
+def plug_window_summary(device_id: int, since: float, until: float) -> dict:
+    """Peak draw plus the relay state at each end of a window, for the away
+    summary — "did something switch on while I was out?". `changed` compares
+    the first and last samples rather than counting transitions, because
+    anything thermostatic (a fridge) cycles all day on its own."""
+    with connect() as conn:
+        agg = conn.execute(
+            """SELECT MAX(watts) AS mx FROM power_readings
+               WHERE device_id = ? AND ts >= ? AND ts <= ?""",
+            (device_id, since, until),
+        ).fetchone()
+        first = conn.execute(
+            """SELECT relay_on FROM power_readings
+               WHERE device_id = ? AND ts >= ? AND ts <= ?
+               ORDER BY ts ASC LIMIT 1""", (device_id, since, until)).fetchone()
+        last = conn.execute(
+            """SELECT relay_on FROM power_readings
+               WHERE device_id = ? AND ts >= ? AND ts <= ?
+               ORDER BY ts DESC LIMIT 1""", (device_id, since, until)).fetchone()
+    start_on = bool(first["relay_on"]) if first else None
+    end_on = bool(last["relay_on"]) if last else None
+    return {
+        "max_watts": round(agg["mx"], 1) if agg and agg["mx"] is not None else None,
+        "start_on": start_on,
+        "end_on": end_on,
+        "changed": (start_on is not None and end_on is not None
+                    and start_on != end_on),
+    }
 
 
 def metric_window_stats(metric: str, since: float, until: float) -> dict:
