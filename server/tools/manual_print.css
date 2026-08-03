@@ -1,0 +1,360 @@
+/* Print stylesheet for MANUAL.pdf — light paper counterpart of the dashboard's
+   soldermask/silkscreen language: mono silkscreen headings, copper accents.
+   Applied by tools/build_manual_pdf.py; see that file's docstring for the two
+   layout traps (page margins, hanging indents in code blocks). */
+
+:root {
+  --ink:        #16201a;
+  --ink-2:      #46524a;
+  --muted:      #7b867d;
+  --rule:       #dde2dc;
+  --rule-2:     #c3ccc3;
+  --copper:     #a4622a;
+  --copper-lt:  #c8813f;
+  --tint:       #faf5ef;   /* copper wash — notes */
+  --surface:    #f5f7f4;   /* code substrate */
+  --surface-br: #e3e8e2;
+  --danger:     #93361a;
+
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  --sans: system-ui, -apple-system, "Helvetica Neue", sans-serif;
+}
+
+/* No margin here on purpose: the page box comes from Chromium's pdf() call, so
+   the footer gets its band. An @page margin would override it and collide. */
+@page { size: A4; }
+
+html { font-size: 10.2pt; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--ink);
+  line-height: 1.56;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  hyphens: none;
+}
+
+p { margin: 0 0 0.62em; orphans: 3; widows: 3; }
+
+/* ── masthead ─────────────────────────────────────────────────────────── */
+
+.masthead { margin: 0 0 1.4em; }
+
+.masthead .rule-top {
+  height: 3px;
+  background: var(--copper);
+  margin-bottom: 14px;
+}
+
+.masthead h1 {
+  font-family: var(--mono);
+  font-size: 25pt;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  margin: 0;
+  color: var(--ink);
+}
+
+.masthead h1 .sub {
+  display: block;
+  font-size: 13pt;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--copper);
+  margin-top: 6px;
+}
+
+.masthead .meta {
+  font-family: var(--mono);
+  font-size: 7.6pt;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+
+.masthead .meta span + span::before {
+  content: "·";
+  margin: 0 0.6em;
+  color: var(--rule-2);
+}
+
+p.lede {
+  font-size: 10.8pt;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* ── headings ─────────────────────────────────────────────────────────── */
+
+h2 {
+  font-family: var(--mono);
+  font-size: 14pt;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+  color: var(--ink);
+  margin: 0 0 0.85em;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--rule);
+  position: relative;
+  break-after: avoid;
+  page-break-after: avoid;
+  break-before: page;
+  page-break-before: always;
+}
+
+h2::after {   /* copper segment on the section rule — a silkscreen tick */
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 34px;
+  height: 2px;
+  background: var(--copper);
+}
+
+h2 .num {
+  color: var(--copper);
+  margin-right: 0.45em;
+}
+
+h3 {
+  font-family: var(--mono);
+  font-size: 10.4pt;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  margin: 1.6em 0 0.55em;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+h3::before {   /* a small copper pad */
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  background: var(--copper);
+  margin-right: 8px;
+  vertical-align: 0.12em;
+}
+
+h2 + h3 { margin-top: 0.4em; }
+
+/* ── table of contents ────────────────────────────────────────────────── */
+
+.toc {
+  break-before: avoid;
+  page-break-before: avoid;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--copper);
+  border-radius: 2px;
+  padding: 14px 18px 16px;
+  background: #fbfcfa;
+}
+
+.toc h2 {
+  break-before: auto;
+  page-break-before: auto;
+  font-size: 8pt;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 0;
+  padding: 0;
+  margin: 0 0 0.7em;
+}
+
+.toc h2::after { display: none; }
+
+.toc ul { list-style: none; margin: 0; padding: 0; }
+
+.toc li {
+  font-family: var(--mono);
+  font-size: 9pt;
+  line-height: 1.85;
+  padding-left: 0;
+}
+
+.toc a { color: var(--ink); text-decoration: none; }
+.toc a::first-letter { color: inherit; }
+
+/* ── callouts ─────────────────────────────────────────────────────────── */
+
+.callout {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  background: #fdf3ec;
+  border: 1px solid #e8c3a4;
+  border-radius: 3px;
+  padding: 14px 16px 12px;
+  margin: 0 0 1.4em;
+}
+
+.callout h2 {
+  break-before: auto;
+  page-break-before: auto;
+  font-size: 11pt;
+  color: var(--danger);
+  border: 0;
+  padding: 0;
+  margin: 0 0 0.55em;
+}
+
+.callout h2::after { display: none; }
+.callout p:last-child { margin-bottom: 0; }
+
+blockquote {
+  margin: 1.1em 0;
+  padding: 10px 14px 8px;
+  background: var(--tint);
+  border-left: 2px solid var(--copper-lt);
+  border-radius: 0 2px 2px 0;
+  font-size: 9.5pt;
+  color: var(--ink-2);
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+blockquote p:last-child { margin-bottom: 0; }
+blockquote strong { color: var(--ink); }
+
+/* ── lists ────────────────────────────────────────────────────────────── */
+
+ul { margin: 0 0 0.8em; padding-left: 1.35em; }
+ol { margin: 0 0 0.8em; padding-left: 2em; }   /* mono markers need the room */
+li { margin-bottom: 0.22em; }
+li > p { margin-bottom: 0.3em; }
+ul li::marker { color: var(--copper-lt); }
+ol li::marker { color: var(--copper); font-family: var(--mono); font-size: 0.9em; }
+
+ul.task-list { list-style: none; padding-left: 0.15em; }
+ul.task-list li { padding-left: 1.35em; text-indent: -1.35em; }
+
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 9px;
+  height: 9px;
+  border: 1.2px solid var(--rule-2);
+  border-radius: 1px;
+  background: #fff;
+  margin: 0 8px 0 0;
+  vertical-align: 0.02em;
+  text-indent: 0;
+}
+
+/* ── tables ───────────────────────────────────────────────────────────── */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0 1.3em;
+  font-size: 8.9pt;
+  line-height: 1.42;
+}
+
+thead { display: table-header-group; }
+
+th {
+  font-family: var(--mono);
+  font-size: 7.4pt;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 9px 6px 0;
+  border-bottom: 1.4px solid var(--rule-2);
+  vertical-align: bottom;
+}
+
+td {
+  padding: 6px 9px 6px 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  color: var(--ink-2);
+}
+
+td:first-child { color: var(--ink); }
+tr { break-inside: avoid; page-break-inside: avoid; }
+th:last-child, td:last-child { padding-right: 0; }
+table code { font-size: 8.2pt; }
+
+/* ── code ─────────────────────────────────────────────────────────────── */
+
+code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: #eef1ec;
+  border-radius: 2px;
+  padding: 0.5px 3.5px;
+  color: #24352b;
+}
+
+pre {
+  background: var(--surface);
+  border: 1px solid var(--surface-br);
+  border-radius: 3px;
+  padding: 10px 12px;
+  margin: 0.5em 0 1.2em;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  overflow: visible;
+}
+
+pre code {
+  display: block;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 8.3pt;
+  line-height: 1.5;
+  color: #24352b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+pre code a { text-decoration: none; }   /* pandoc's empty line anchors */
+
+/* pandoc/skylighting token classes, muted for paper */
+pre .co, pre .cm { color: #6f8a76; font-style: italic; }   /* comment */
+pre .st, pre .ss, pre .vs { color: #97591f; }              /* string */
+pre .kw, pre .cf { color: #1f5f45; font-weight: 600; }     /* keyword */
+pre .fu { color: #1f4f6b; }                                /* function */
+pre .dt { color: #2f6a52; }                                /* type */
+pre .dv, pre .bn, pre .fl { color: #7a4a8c; }              /* numbers */
+pre .va { color: #8a4a1f; }                                /* variable */
+pre .op, pre .sc { color: #56635a; }                       /* operator */
+pre .at { color: #1f5f45; }                                /* attribute */
+pre .er, pre .al { color: var(--danger); }
+pre .pp { color: #8a4a1f; }
+
+/* ── links, rules, misc ───────────────────────────────────────────────── */
+
+a { color: var(--copper); text-decoration: none; }
+a[href^="#"] { color: var(--ink); border-bottom: 1px solid #e3cdb6; }
+.toc a[href^="#"] { border-bottom: 0; }
+.toc li a[href^="#"]::before { content: "▸"; color: var(--copper); margin-right: 0.55em; }
+
+hr { display: none; }
+
+strong { font-weight: 650; color: var(--ink); }
+em { font-style: italic; }
+
+/* Sources: print the URL under each link, since paper has no hyperlinks */
+#sources ~ ul a[href^="http"]::after {
+  content: attr(href);
+  display: block;
+  font-family: var(--mono);
+  font-size: 7.4pt;
+  line-height: 1.5;
+  color: var(--muted);
+  word-break: break-all;
+}
