@@ -1006,22 +1006,27 @@ Started fresh rather than migrating the Mac's database (§7.6) — the Pi reseed
 
 **Still outstanding**
 
-1. **Tailscale key expiry (§7.8)** — the node is joined and working, but its key
-   **expires 2027-01-30**. Disable that: admin console → **Machines** → `hub` → **⋯**
-   → **Disable key expiry**.
+1. **Tailscale clients on the Mac and phone** — the Pi itself is fully done: joined
+   as `hub`, MagicDNS resolving, dashboard verified, and **key expiry disabled** so
+   the node cannot silently drop off the tailnet (the default ~180-day expiry would
+   otherwise strand it while it kept running perfectly on the LAN).
 
-   This is the one step that rots silently. When a node key expires the Pi drops off
-   the tailnet while continuing to run perfectly on the LAN — the dashboard simply
-   stops answering remotely, nothing on the box looks wrong, and health ingest stops
-   with it. Check the current state any time with:
+   What remains is that **the tailnet has only the Pi on it**, so `hub:8000` resolves
+   from nothing else yet:
+
+   ```bash
+   brew install --cask tailscale     # Mac
+   ```
+
+   Plus the iPhone from the App Store, same account — a hard requirement for §7.10,
+   since the ingest endpoint only resolves over the tailnet.
+
+   Re-check the expiry setting after any re-authentication:
 
    ```bash
    ssh louis@192.168.0.188 'sudo tailscale status --json' | grep -i keyexpiry
+   # no match = disabled, which is what you want
    ```
-
-   Tailscale is also **not yet installed on the Mac or the phone** — the tailnet has
-   only the Pi on it, so `hub:8000` resolves from nothing else yet. Mac:
-   `brew install --cask tailscale`. Phone: App Store, same account (needed for §7.10).
 
 2. **Off-box backup (§7.9)** — the on-card rolling weekly `.backup` cron is live and
    tested. The second cron line, the one that matters when the card dies, is
