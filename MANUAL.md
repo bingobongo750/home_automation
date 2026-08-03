@@ -699,10 +699,26 @@ spend on the endurance rating rather than on more space you will not use.
 ### 7.2 First boot
 
 ```bash
-ssh <user>@hub.local
+ssh <user>@<hostname>.local
 sudo apt update && sudo apt full-upgrade -y
 sudo apt install -y git python3-venv sqlite3
 ```
+
+> **Setting a public key in Imager also disables password SSH**, via
+> `/etc/ssh/sshd_config.d/50-cloud-init.conf`. That is the behaviour you want, but
+> cloud-init owns that file. To make it explicit and immune to cloud-init rewriting
+> its own config, add a higher-numbered drop-in — and **always validate before
+> reloading**, or a typo locks you out of a headless box:
+>
+> ```bash
+> printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n' \
+>   | sudo tee /etc/ssh/sshd_config.d/99-hardening.conf
+> sudo sshd -t && sudo systemctl reload ssh    # only reloads if the config parses
+> ```
+>
+> Verify from the Mac before closing your working session: `ssh <user>@<host>` must
+> still succeed on the key, and `ssh -o PreferredAuthentications=password
+> -o PubkeyAuthentication=no <user>@<host>` must be refused.
 
 Confirm the timezone and that the card came up as the root filesystem:
 
@@ -717,11 +733,20 @@ between a card that lasts years and one that does not:
 ```bash
 sudo sed -i 's/^#\?SystemMaxUse=.*/SystemMaxUse=50M/' /etc/systemd/journald.conf
 sudo systemctl restart systemd-journald
-sudo systemctl disable --now dphys-swapfile
 ```
 
-The journal is otherwise unbounded and this service logs continuously; swap on flash is
-pure wear for a workload that never comes near 4 GB.
+The journal is otherwise unbounded and this service logs continuously.
+
+> **Check what backs your swap before disabling it.** Older images used
+> `dphys-swapfile`, a swap *file on the card* — pure flash wear for a workload that
+> never comes near 4 GB, and worth disabling. Debian 13 (trixie) images ship
+> **zram** instead: compressed swap living in RAM, which causes no card wear at all
+> and is genuinely useful on a 4 GB box. Confirm before touching it:
+>
+> ```bash
+> cat /proc/swaps        # /dev/zram0 = in RAM, leave it alone
+> sudo systemctl disable --now dphys-swapfile   # only if that file-based unit exists
+> ```
 
 ### 7.3 Get the code
 
@@ -754,12 +779,14 @@ sudo usermod -aG dialout $USER
 
 Log out and back in for the group to take effect.
 
-> **ModemManager will steal your Arduino.** On a stock Debian-based image,
-> ModemManager probes new `ttyACM` devices and can hold the port for seconds at a
-> time, giving you intermittent `SERIAL UNAVAILABLE`. On a dedicated hub, remove it:
+> **ModemManager will steal your Arduino.** Where it is installed, ModemManager
+> probes new `ttyACM` devices and can hold the port for seconds at a time, giving
+> you intermittent `SERIAL UNAVAILABLE`. It is **not** present on a Raspberry Pi OS
+> Lite (Debian 13) image, so this is usually a no-op — check before assuming:
 >
 > ```bash
-> sudo apt purge -y modemmanager
+> dpkg -l | grep -q '^ii  modemmanager' && sudo apt purge -y modemmanager \
+>   || echo "not installed, nothing to do"
 > ```
 
 ### 7.5 Configure
