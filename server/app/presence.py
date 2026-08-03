@@ -176,25 +176,13 @@ def arrived() -> dict:
                     "reason": f"house is in {scene_now}, not Away"}
 
         target, wake_time = scene_for_arrival(now)
-        away_since = presence["since"] or (active.get("activated_at") if active else None)
 
-        summary = None
-        if away_since is not None:
-            # End the window before the detected arrival: you reach the door
-            # before the hub knows, and the PIR, CO2, lux and plug draw in that
-            # gap are all you. Untrimmed, every homecoming reads as a break-in.
-            until = now - config.PRESENCE_ARRIVAL_TRIM_S
-            if until - away_since >= config.PRESENCE_SUMMARY_MIN_S:
-                summary = scenes._compute_away_summary(away_since, until)
-                db.set_setting("last_away_summary", summary)
-                log.info("Away summary stored for a %.0f min absence (disturbed=%s)",
-                         (now - away_since) / 60, summary["disturbed"])
-            else:
-                log.info("Absence too short for a summary (%.0f min)",
-                         max(until - away_since, 0) / 60)
-
+        # The away summary is NOT computed here. scenes.activate() owns it, so
+        # it fires on every way out of Away — a phone arrival, or you tapping
+        # Home on the dashboard because this Shortcut never made it. One owner,
+        # one window definition, no chance of the two drifting apart.
         try:
-            scenes.activate(target, wake_time, source="presence: arrived")
+            result = scenes.activate(target, wake_time, source="presence: arrived")
         except Exception:
             log.exception("Presence could not activate %s on arrival", target)
             return {"presence": "home", "scene": scene_now, "applied": False,
@@ -205,7 +193,7 @@ def arrived() -> dict:
     return {"presence": "home", "scene": target, "applied": True,
             "reason": ("arrived inside the nightly sleep window"
                        if target == "Sleeping" else "arrived outside the sleep window"),
-            "summary_generated": summary is not None}
+            "summary_generated": bool(result and result.get("away_summary_generated"))}
 
 
 def state() -> dict:

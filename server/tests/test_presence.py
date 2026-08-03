@@ -356,5 +356,73 @@ class NightAwakeningsTestCase(unittest.TestCase):
         self.assertEqual(s["motion"]["count"], 0)
 
 
+class SummaryFiresOnEveryExitFromAwayTestCase(unittest.TestCase):
+    """The summary must not depend on HOW you left Away.
+
+    The case that most needs it is the one where the arrival Shortcut failed —
+    Tailscale asleep, iOS disabled the automation — so you get home to a dark
+    house and tap Home on the dashboard instead. That is exactly when you want
+    to know what happened, and an earlier version generated nothing there.
+    """
+
+    def setUp(self):
+        _reset()
+        config.PRESENCE_DEPART_GRACE_S = 0.05
+        app = Flask(__name__)
+        app.register_blueprint(api)
+        self.client = app.test_client()
+        self.addCleanup(presence._cancel_depart_locked)
+
+    def seed_absence(self, hours=3):
+        now = time.time()
+        since = now - hours * 3600
+        db.set_active_scene("Away", since)
+        db.set_presence("away", since, "departed", since)
+        for i in range(20):     # one intrusion-like burst, mid-absence
+            db.insert_reading("motion", 1, ts=since + 3600 + i * 5)
+        return now
+
+    def test_manual_dashboard_switch_out_of_away_generates_one(self):
+        self.seed_absence()
+        r = self.client.post("/api/scenes/Home/activate", json={}).get_json()
+        self.assertTrue(r["away_summary_generated"])
+        summary = db.get_setting("last_away_summary")
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["motion"]["events"], 1)
+
+    def test_manual_switch_to_sleeping_also_generates_one(self):
+        self.seed_absence()
+        r = self.client.post("/api/scenes/Sleeping/activate", json={}).get_json()
+        self.assertTrue(r["away_summary_generated"])
+        self.assertIsNotNone(db.get_setting("last_away_summary"))
+
+    def test_phone_arrival_still_generates_exactly_one(self):
+        self.seed_absence()
+        r = self.client.post("/api/presence/arrived").get_json()
+        self.assertTrue(r["summary_generated"])
+        self.assertIsNotNone(db.get_setting("last_away_summary"))
+
+    def test_manual_switch_is_trimmed_too(self):
+        """You walked in, found it dark, then crossed to the dashboard — that
+        motion is even more certainly you than a phone arrival's."""
+        now = self.seed_absence()
+        for i in range(12):     # you, in the trim window
+            db.insert_reading("motion", 1, ts=now - 45 + i * 3)
+        self.client.post("/api/scenes/Home/activate", json={})
+        summary = db.get_setting("last_away_summary")
+        self.assertEqual(summary["motion"]["events"], 1, "only the real burst")
+
+    def test_re_activating_away_does_not_generate_one(self):
+        self.seed_absence()
+        r = self.client.post("/api/scenes/Away/activate", json={}).get_json()
+        self.assertFalse(r["away_summary_generated"])
+        self.assertIsNone(db.get_setting("last_away_summary"))
+
+    def test_no_summary_when_the_house_was_never_away(self):
+        scenes.activate("Sleeping", "09:30")
+        r = self.client.post("/api/scenes/Home/activate", json={}).get_json()
+        self.assertFalse(r["away_summary_generated"])
+
+
 if __name__ == "__main__":
     unittest.main()

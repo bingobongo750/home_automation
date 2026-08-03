@@ -115,7 +115,8 @@ backend restarts.
   manually. Any activation cancels a pending wake; a pending wake survives
   restarts (overdue ones fire at startup). Response:
   `{"active": {name, activated_at, wake_time, wake_at}, "devices": [...],
-  "summary_generated": bool}` — `devices` reports per-device success;
+  "summary_generated": bool, "away_summary_generated": bool}` — `devices`
+  reports per-device success;
   locked plugs are skipped (`{"ok": false, "skipped": "locked"}`) and an
   unreachable device never blocks the rest. `400` on a bad `wake_time`,
   `404` for an unknown scene.

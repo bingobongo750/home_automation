@@ -243,6 +243,10 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
 - Arrival resolves to **Home or Sleeping** from the stored nightly window (wrap-past-
   midnight handled), carrying the schedule's own `wake_time` when it lands inside, so
   getting home at 02:00 still produces the morning summary.
+- **The away summary is computed in `scenes.activate()`, not in `presence.arrived()`**,
+  so it fires on *every* way out of Away — a phone arrival, or you tapping Home on
+  the dashboard because the Shortcut never made it. That second case is the one that
+  most needs it, and an earlier version silently produced nothing there.
 - **The away summary's window ends `PRESENCE_ARRIVAL_TRIM_S` before the detected
   arrival.** You reach the door before the hub knows, and the PIR/CO2/lux/plug draw in
   that gap are all you — untrimmed, every homecoming reads as a break-in and the summary

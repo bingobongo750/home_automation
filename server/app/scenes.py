@@ -133,6 +133,29 @@ def activate(name: str, wake_time: str | None = None, *,
             log.info("Overnight summary stored for %.1fh Sleeping window",
                      (now - prev["activated_at"]) / 3600)
 
+        # The away summary belongs HERE, not in presence.arrived(), because it
+        # has to fire on EVERY way out of Away — not just a phone arrival. The
+        # case that most needs it is the one where the arrival Shortcut failed
+        # (Tailscale asleep, iOS disabled the automation): you get home to an
+        # Away house and tap Home on the dashboard, and that is exactly when
+        # you want to know what happened while you were out.
+        away_summary = None
+        if (prev and prev["name"] == "Away" and prev.get("activated_at")
+                and scene["name"] in ("Home", "Sleeping")):
+            # Trim the tail whatever the trigger. A phone arrival is detected
+            # late; a manual tap is later still, since you walked in, found the
+            # house dark and crossed the room to the dashboard. Either way the
+            # last stretch of motion, CO2 and lux is you.
+            until = now - config.PRESENCE_ARRIVAL_TRIM_S
+            if until - prev["activated_at"] >= config.PRESENCE_SUMMARY_MIN_S:
+                away_summary = _compute_away_summary(prev["activated_at"], until)
+                db.set_setting("last_away_summary", away_summary)
+                log.info("Away summary stored for a %.0f min absence (disturbed=%s)",
+                         (now - prev["activated_at"]) / 60, away_summary["disturbed"])
+            else:
+                log.info("Absence too short for a summary (%.0f min)",
+                         max(until - prev["activated_at"], 0) / 60)
+
         # Re-activating the current scene (e.g. changing the wake time mid-
         # night) keeps the original activation time — the summary window
         # should still cover the whole night.
@@ -156,6 +179,7 @@ def activate(name: str, wake_time: str | None = None, *,
                    "wake_time": wake_time, "wake_at": wake_at},
         "devices": results,
         "summary_generated": summary is not None,
+        "away_summary_generated": away_summary is not None,
     }
 
 
