@@ -108,15 +108,38 @@ function renderScene() {
     btn.setAttribute("aria-pressed", String(on));
   }
   if (activeScene && activeScene.name === "Sleeping" && activeScene.wake_time) {
-    sceneNote.textContent = `→ Day ${activeScene.wake_time}`;
-    sceneNote.title = "Switches the scene back to Day at this time (not an alarm)";
+    sceneNote.textContent = `→ Home ${activeScene.wake_time}`;
+    sceneNote.title = "Switches the scene back to Home at this time (not an alarm)";
   } else {
     sceneNote.textContent = "";
     sceneNote.title = "";
   }
   sceneNote.classList.remove("err");
-  renderSummaryCard(); // card visibility depends on the active scene
+  // Only useful while Away — everywhere else an arrival is a no-op.
+  document.getElementById("im-home-btn").hidden = name !== "Away";
+  renderSummaryCard();
 }
+
+/* "I'm home" — the manual fallback when the arrival Shortcut didn't fire.
+   Deliberately posts to /api/presence/arrived rather than activating a scene:
+   the host then picks Home or Sleeping from the nightly window, so tapping
+   this at 02:00 puts the house to bed instead of switching every light on.
+   Exactly the decision the phone would have triggered. */
+document.getElementById("im-home-btn").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget;
+  btn.disabled = true;
+  try {
+    const result = await postJSON("/api/presence/arrived");
+    if (result.summary_generated) await loadAwaySummary();
+    await pollFast();
+    sceneNote.classList.remove("err");
+  } catch {
+    sceneNote.textContent = "Couldn't reach the hub.";
+    sceneNote.classList.add("err");
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 async function activateScene(name, wakeTime) {
   const result = await postJSON(`/api/scenes/${encodeURIComponent(name)}/activate`,
@@ -124,6 +147,9 @@ async function activateScene(name, wakeTime) {
   activeScene = result.active;
   renderScene();
   if (result.summary_generated) loadSummary();
+  // Away -> Home/Sleeping by hand generates a disturbance summary too. Missing
+  // this was why switching manually out of Away showed nothing.
+  if (result.away_summary_generated) loadAwaySummary();
   pollFast(); // device widgets reflect the scene's states right away
   return result;
 }
@@ -232,10 +258,13 @@ async function pollFast() {
     const prevSceneName = activeScene && activeScene.name;
     activeScene = scene;
     renderScene();
-    if (prevSceneName && prevSceneName !== scene.name && scene.name === "Home") loadSummary();
-    // Leaving Away means a fresh disturbance summary may be waiting. Checked
-    // on the transition rather than every poll, same as the overnight one.
-    if (prevSceneName === "Away" && scene.name !== "Away") loadAwaySummary();
+    // A server-side transition (wake timer, nightly schedule, a phone arrival)
+    // may have produced either summary. Checked on the transition rather than
+    // every poll.
+    if (prevSceneName && prevSceneName !== scene.name) {
+      if (scene.name === "Home") loadSummary();
+      if (prevSceneName === "Away") loadAwaySummary();
+    }
     renderTicker(latest);
     renderMetricValues(latest);
     renderPIR(latest);
@@ -1023,6 +1052,27 @@ function renderAwaySummaryCard() {
   verdict.classList.toggle("alert", !!s.disturbed);
   document.getElementById("away-summary-flag").textContent = s.disturbed ? "ALERT" : "QUIET";
 
+  // Timeline: where in the absence things happened. A tick per movement event,
+  // positioned by its fraction through the window.
+  const timeline = document.getElementById("away-timeline");
+  const track = document.getElementById("away-track");
+  track.textContent = "";
+  const windowSpan = s.to - s.from;
+  if (windowSpan > 0) {
+    for (const t of (s.motion.times || [])) {
+      const tick = document.createElement("span");
+      tick.className = "away-tick";
+      tick.style.left = `${Math.min(100, Math.max(0, ((t - s.from) / windowSpan) * 100))}%`;
+      tick.title = `Movement at ${axisTime(t, 0)}`;
+      track.appendChild(tick);
+    }
+    document.getElementById("away-axis-from").textContent = axisTime(s.from, 0);
+    document.getElementById("away-axis-to").textContent = axisTime(s.to, 0);
+    timeline.hidden = false;
+  } else {
+    timeline.hidden = true;
+  }
+
   const stats = document.getElementById("away-summary-stats");
   stats.textContent = "";
 
@@ -1050,9 +1100,15 @@ function renderAwaySummaryCard() {
                                             : "unchanged",
                              changed.length > 0));
   }
-  stats.append(summaryStat("Temp", s.temp.avg, "°C",
-                           s.temp.min === null ? null : `min ${s.temp.min} · max ${s.temp.max}`,
-                           false));
+
+  // Ambient conditions as one quiet line, not stat tiles — this card is about
+  // disturbances, and giving temperature equal visual weight would bury them.
+  const bits = [];
+  if (s.temp && s.temp.avg !== null) bits.push(`${s.temp.avg} °C avg (${s.temp.min}–${s.temp.max})`);
+  if (s.hum && s.hum.avg !== null) bits.push(`${s.hum.avg} %RH avg`);
+  if (s.lux && s.lux.max !== null) bits.push(`peak ${s.lux.max} lx`);
+  document.getElementById("away-ambient").textContent =
+    bits.length ? `Room while out: ${bits.join(" · ")}` : "";
 
   awayCard.hidden = false;
 }
@@ -1104,8 +1160,12 @@ function summaryStat(label, value, unit, sub, subAlert) {
 
 function renderSummaryCard() {
   const s = lastSummary;
-  const show = s && activeScene && activeScene.name === "Home"
-    && localStorage.getItem(SUMMARY_DISMISS_KEY) !== String(s.to);
+  // Shown in ANY scene, not just Home. The two summaries are independent
+  // records and each stays until dismissed or replaced by a newer one: come
+  // home late and go straight to bed, and next morning you want both — the
+  // away card covering the evening you were out, the overnight card covering
+  // the night that followed.
+  const show = s && localStorage.getItem(SUMMARY_DISMISS_KEY) !== String(s.to);
   if (!show) {
     summaryCard.hidden = true;
     return;
@@ -1316,6 +1376,10 @@ async function loadDetail(widget) {
       setStat(widget, "avg_24h_w", stats.avg_24h_w, "W");
       setStat(widget, "kwh_24h", stats.kwh_24h, "kWh");
       setStat(widget, "avg_7d_w", stats.avg_7d_w, "W");
+    } else if (kind === "nights") {
+      // Its own range/metric buttons drive it (see loadNights); the generic
+      // range machinery does not apply.
+      renderNights();
     } else if (kind === "motion") {
       const data = await getJSON(`/api/motion/events?range=${range}`);
       setStat(widget, "count", data.count, null);
@@ -1640,6 +1704,203 @@ function renderActivityLog(events) {
     log.appendChild(li);
   }
 }
+
+/* ------------------------------------------------------------- nights
+   Every recorded Sleeping window: a trend across 7/30/60 days plus a
+   per-night list. Anomalies come from the server, which flags a metric more
+   than 2 SD from the window's own mean — relative rather than absolute,
+   because "cold" only means anything against your own nights and a fixed
+   threshold would light up every night in winter. */
+
+const NIGHT_METRICS = {
+  temp: { label: "Temp", unit: "°C", decimals: 1, pick: (n) => n.temp && n.temp.avg },
+  hum: { label: "Humidity", unit: "%RH", decimals: 1, pick: (n) => n.hum && n.hum.avg },
+  co2: { label: "CO₂", unit: "ppm", decimals: 0, pick: (n) => n.co2 && n.co2.avg },
+  motion: { label: "Got up", unit: "×", decimals: 0, pick: (n) => n.motion && n.motion.count },
+};
+
+let nightsData = [];
+let nightsRange = "7d";
+let nightsMetric = "temp";
+
+async function loadNights() {
+  try {
+    const data = await getJSON(`/api/nights?range=${nightsRange}`);
+    nightsData = data.nights || [];
+  } catch {
+    return;
+  }
+  document.getElementById("nights-count").textContent = nightsData.length || "—";
+  document.getElementById("nights-note").textContent = nightsData.length
+    ? `Last ${nightsRange}. Click a night to inspect it.`
+    : "No Sleeping windows recorded yet.";
+  renderNights();
+}
+
+function renderNights() {
+  const spec = NIGHT_METRICS[nightsMetric];
+  // oldest-first for the chart; the API returns newest-first for the list
+  const points = nightsData.slice().reverse()
+    .map((n) => ({ ts: n.from, value: spec.pick(n) }))
+    .filter((p) => p.value !== null && p.value !== undefined);
+
+  const chart = document.getElementById("nights-chart");
+  if (chart) {
+    drawChart(chart, points, {
+      color: cssVar("--s-temp"), unit: spec.unit, decimals: spec.decimals,
+      allowNegative: nightsMetric === "temp",
+    });
+  }
+
+  const values = points.map((p) => p.value);
+  const stats = document.getElementById("nights-stats");
+  stats.textContent = "";
+  if (values.length) {
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    stats.append(
+      summaryStat(`${spec.label} avg`, mean.toFixed(spec.decimals), spec.unit, null, false),
+      summaryStat("Best", Math.min(...values).toFixed(spec.decimals), spec.unit, null, false),
+      summaryStat("Worst", Math.max(...values).toFixed(spec.decimals), spec.unit, null, false),
+      summaryStat("Nights", values.length, null, null, false),
+    );
+  }
+
+  const list = document.getElementById("nights-list");
+  list.textContent = "";
+  if (!nightsData.length) {
+    const li = document.createElement("li");
+    li.className = "log-empty";
+    li.textContent = "No nights recorded yet.";
+    list.appendChild(li);
+    return;
+  }
+  for (const n of nightsData) {
+    const li = document.createElement("li");
+    li.className = "night-row";
+    li.tabIndex = 0;
+
+    const date = document.createElement("span");
+    date.className = "night-date";
+    date.textContent = n.night;
+
+    const vals = document.createElement("span");
+    vals.className = "night-vals";
+    const cell = (metric, text) => {
+      const el = document.createElement("span");
+      el.textContent = text;
+      // The server decides what is anomalous; the frontend only colours it.
+      if ((n.anomalies || []).includes(metric)) el.className = "night-anom";
+      return el;
+    };
+    const hours = ((n.to - n.from) / 3600).toFixed(1);
+    vals.append(
+      cell(null, `${hours} h`),
+      cell("temp", n.temp && n.temp.avg !== null ? `${n.temp.avg} °C` : "—"),
+      cell("hum", n.hum && n.hum.avg !== null ? `${n.hum.avg} %` : "—"),
+      cell("co2", n.co2 && n.co2.avg !== null && n.co2.avg !== undefined ? `${n.co2.avg} ppm` : "—"),
+      cell("motion", `${(n.motion && n.motion.count) || 0}× up`),
+    );
+
+    li.append(date, vals);
+    const open = () => openNightDialog(n.night);
+    li.addEventListener("click", open);
+    li.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
+    list.appendChild(li);
+  }
+}
+
+const nightDialog = document.getElementById("night-dialog");
+
+async function openNightDialog(night) {
+  let data;
+  try {
+    data = await getJSON(`/api/nights/${encodeURIComponent(night)}`);
+  } catch {
+    return;
+  }
+  nightDialogNight = data.night;
+  resetNightDelete();
+  document.getElementById("night-dialog-title").textContent = `Night of ${data.night}`;
+  const hours = ((data.to - data.from) / 3600).toFixed(1);
+  document.getElementById("night-dialog-window").textContent =
+    `Sleeping ${axisTime(data.from, 0)} → ${axisTime(data.to, 0)} · ${hours} h`;
+
+  const stats = document.getElementById("night-dialog-stats");
+  stats.textContent = "";
+  const range = (st) => (st && st.min !== null ? `min ${st.min} · max ${st.max}` : null);
+  stats.append(
+    summaryStat("Temp avg", data.temp && data.temp.avg, "°C", range(data.temp), false),
+    summaryStat("Humidity avg", data.hum && data.hum.avg, "%RH", range(data.hum), false),
+  );
+  if (data.co2 && data.co2.avg !== null && data.co2.avg !== undefined) {
+    stats.append(summaryStat("CO₂ avg", data.co2.avg, "ppm",
+      data.co2.start === null ? null : `${data.co2.start} → ${data.co2.end} ppm`,
+      data.co2.rose_significantly));
+  }
+  const got = (data.motion && data.motion.count) || 0;
+  stats.append(summaryStat("Got up", got, got === 1 ? "time" : "times",
+    got === 0 ? "slept through" : null, false));
+
+  const extra = document.getElementById("night-dialog-extra");
+  extra.textContent = "";
+  const times = (data.motion && data.motion.events) || [];
+  if (times.length) {
+    const p = document.createElement("p");
+    p.className = "card-note";
+    p.textContent = "Up at " + times.map((t) => axisTime(t, 0)).join(", ");
+    extra.appendChild(p);
+  }
+  nightDialog.hidden = false;
+}
+
+/* Delete, behind an inline confirm rather than a browser confirm() so it
+   matches the rest of the board. Two-step because it is irreversible. */
+let nightDialogNight = null;
+
+function resetNightDelete() {
+  document.getElementById("night-delete").hidden = false;
+  document.getElementById("night-delete-confirm").hidden = true;
+}
+
+document.getElementById("night-delete").addEventListener("click", () => {
+  document.getElementById("night-delete").hidden = true;
+  document.getElementById("night-delete-confirm").hidden = false;
+});
+document.getElementById("night-delete-no").addEventListener("click", resetNightDelete);
+document.getElementById("night-delete-yes").addEventListener("click", async () => {
+  if (!nightDialogNight) return;
+  try {
+    await fetch(`/api/nights/${encodeURIComponent(nightDialogNight)}`, { method: "DELETE" });
+  } catch {
+    return;
+  }
+  nightDialog.hidden = true;
+  resetNightDelete();
+  loadNights();   // averages and anomaly flags shift once a junk night is gone
+});
+
+document.getElementById("night-dialog-close").addEventListener("click", () => {
+  nightDialog.hidden = true;
+  resetNightDelete();
+});
+nightDialog.addEventListener("click", (e) => {
+  if (e.target === nightDialog) { nightDialog.hidden = true; resetNightDelete(); }
+});
+
+document.querySelectorAll("[data-nrange]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("[data-nrange]").forEach((b) => b.classList.toggle("active", b === btn));
+    nightsRange = btn.dataset.nrange;
+    loadNights();
+  });
+});
+document.querySelectorAll("[data-nmetric]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("[data-nmetric]").forEach((b) => b.classList.toggle("active", b === btn));
+    nightsMetric = btn.dataset.nmetric;
+    renderNights();
+  });
+});
 
 /* ------------------------------------------------------------ view switch
    BOARD is the device dashboard; PLANNER (calendar + to-do) and HEALTH
@@ -3690,7 +3951,8 @@ document.getElementById("sleepd-backdrop").addEventListener("click", closeSleepD
 document.getElementById("vitals-close").addEventListener("click", closeVitalsDetail);
 document.getElementById("vitals-backdrop").addEventListener("click", closeVitalsDetail);
 
-document.querySelectorAll(".widget[data-widget='metric'], .widget[data-widget='motion']")
+document.querySelectorAll(
+  ".widget[data-widget='metric'], .widget[data-widget='motion'], .widget[data-widget='nights']")
   .forEach(wireWidget);
 
 (async () => {
@@ -3698,6 +3960,7 @@ document.querySelectorAll(".widget[data-widget='metric'], .widget[data-widget='m
   await pollFast();     // also sets activeScene, which the summary card needs
   await loadSummary();
   await loadAwaySummary();
+  await loadNights();
   refreshAllSparks();
   // deep-link: /#temp, /#co2, /#motion, /#power-1 (device id) opens that
   // detail; an optional range suffix like /#temp:3h preselects the range;

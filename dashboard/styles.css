@@ -575,6 +575,53 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   font-weight: 600;
 }
 
+/* Disturbance timeline: the absence as a track, one tick per movement event.
+   Position carries the information — 03:14 in an empty flat reads very
+   differently from 18:50 just after you left. */
+.away-timeline { margin: 10px 0 4px; }
+
+.away-track {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.away-tick {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--warn, #d29455);
+  box-shadow: 0 0 4px rgba(210, 148, 85, 0.6);
+}
+
+.away-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.away-ambient {
+  margin: 8px 0 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* "I'm home": a fallback, so it reads as an action rather than a fourth mode
+   sitting alongside the three states. */
+.im-home-btn {
+  border-color: rgba(210, 148, 85, 0.45) !important;
+  color: var(--warn, #d29455) !important;
+}
+
 .summary-dismiss {
   font-size: 18px;
   line-height: 1;
@@ -1755,3 +1802,62 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* Night history list. Values the server flagged as >2 SD from the window's own
+   mean go red — the point is "this night was unlike your others", which a bare
+   number cannot say on its own. */
+.nights-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 320px; overflow-y: auto; }
+
+.night-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.night-row:hover, .night-row:focus-visible {
+  background: rgba(210, 148, 85, 0.09);
+  outline: none;
+}
+
+.night-date { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+
+.night-vals {
+  display: flex;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.night-anom { color: #e0603f; font-weight: 600; }
+
+.nights-metric-switch { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.nights-hint { margin-top: 10px; font-size: 11px; }
+
+.night-dialog-actions { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.night-delete {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  padding: 4px 10px;
+}
+.night-delete:hover { color: var(--ink-2); border-color: rgba(233, 237, 230, 0.2); }
+.night-delete.danger { color: var(--critical); border-color: rgba(208, 59, 59, 0.4); }
+.night-delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+/* Same look as .detail-range, deliberately a different class so the generic
+   widget range handler does not also bind these. */
+.nights-range { display: flex; gap: 6px; margin-bottom: 4px; }

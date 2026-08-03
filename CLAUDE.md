@@ -413,6 +413,8 @@ keep this list in sync when endpoints change:
 - `GET /api/scenes/active` — current scene + activation time + pending wake time (if set)
 - `GET /api/scenes/last-summary` — most recent Sleeping→Home overnight summary (null before the first); carries a `planner` section (today's events + overdue/high-priority tasks)
 - `GET /api/scenes/last-away-summary` — most recent Away→(Home|Sleeping) disturbance summary (null before the first)
+- `GET /api/nights?range=30d` — every recorded Sleeping window, newest first, each with its stored summary plus an `anomalies` list (metrics >2 SD from the window's own mean; awakenings use a plain threshold since a high count means something on its own)
+- `GET /api/nights/:date` — one night's full summary; `DELETE` removes it (a stray Sleeping toggle records a junk few-minute "night" that would otherwise drag the mean the anomaly flags are measured against)
 - `GET /api/presence` — presence state + whether a departure is waiting out its grace
 - `POST /api/presence/departed` / `POST /api/presence/arrived` — phone-driven presence (no body, so an iPhone Shortcut is one action); see `app/presence.py` and `docs/presence-design.md`
 - `GET /api/events?from=YYYY-MM-DD&range=7d` — calendar events in a date window, recurring ones expanded into occurrences
@@ -485,10 +487,28 @@ keep this list in sync when endpoints change:
   labeled as an auto-switch to Home, *not* an alarm; Home/Away activate on click. While a
   non-Home scene is active, auto-mode lighting cards read "Auto paused — ‹scene› scene
   active."
-- The overnight summary is a dismissible card at the top of Room conditions, visible
-  while the house is in Home and there's an undismissed Sleeping→Home summary (dismissal
-  is remembered per-summary in localStorage). Its planner half ("Today" / "Needs
-  attention") renders from the summary's `planner` key and hides when absent.
+- **Two summary cards**, both at the top of Room conditions, both shown in **any** scene,
+  each staying until dismissed or replaced by a newer one — come home late and go straight
+  to bed and next morning you want both: the away card covering the evening out, the
+  overnight card covering the night after. Gating either on the active scene was a bug.
+  The **away card sits above** the overnight one (it is the one that might need acting on)
+  and leads with a **disturbance timeline** — the absence as a track with a tick per
+  movement event, since *where* in the absence something happened is the first thing you
+  want and a list of timestamps cannot show it. Room conditions on that card are one quiet
+  line, not stat tiles: giving temperature equal visual weight would bury the
+  disturbances. Dismissal is remembered per-summary in localStorage. The overnight card's
+  planner half ("Today" / "Needs attention") renders from the summary's `planner` key and
+  hides when absent.
+- **"I'm home"** appears in the header MODE switch **only while Away**. It posts to
+  `/api/presence/arrived`, *not* a scene, so the host picks Home or Sleeping from the
+  nightly window — tapping it at 02:00 puts the house to bed rather than switching every
+  light on. It is the manual fallback for an arrival Shortcut that did not fire.
+- **Nights widget** (Motion zone, since a night is bounded by the scene rather than by a
+  sensor): every recorded Sleeping window. Expands to a 7/30/60d trend over
+  temp/humidity/CO2/awakenings, a per-night list, and a per-night dialog. Anomalous values
+  render red, and a night can be **deleted** from that dialog — a stray Sleeping toggle
+  records a junk few-minute "night" that would otherwise drag the mean those flags are
+  measured against.
 - Planner UI conventions: the calendar is an Apple-Calendar-style **time grid** with
   Day/Week/Month views (weeks start Monday, compact 24h times, copper now-line on
   today) — timed events occupy their duration as blocks tinted by their category color,

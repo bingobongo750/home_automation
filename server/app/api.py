@@ -388,6 +388,83 @@ def scene_last_away_summary():
     return jsonify({"summary": db.get_setting("last_away_summary")})
 
 
+def _flag_night_anomalies(nights: list[dict]) -> list[dict]:
+    """Mark each night's metrics that sit far from the rest of the window.
+
+    Deliberately relative, not absolute: "cold" only means anything against
+    your own nights, and a fixed threshold would flag every night in winter.
+    Uses mean +/- 2 SD over the returned window, and only once there are
+    enough nights for a spread to mean something — with three samples every
+    one of them looks like an outlier.
+    """
+    fields = [("temp", "avg"), ("hum", "avg"), ("co2", "avg")]
+    MIN_NIGHTS = 5
+    for night in nights:
+        night["anomalies"] = []
+
+    # An awakening count is not normally distributed and a high one means
+    # something on its own, so it gets a plain threshold — and, unlike the
+    # relative checks below, it needs no minimum sample count. Done first so a
+    # single recorded night still gets flagged.
+    for night in nights:
+        if (night.get("motion") or {}).get("count", 0) >= 4:
+            night["anomalies"].append("motion")
+
+    if len(nights) < MIN_NIGHTS:
+        return nights
+
+    for metric, key in fields:
+        values = [n[metric][key] for n in nights
+                  if n.get(metric) and n[metric].get(key) is not None]
+        if len(values) < MIN_NIGHTS:
+            continue
+        mean = sum(values) / len(values)
+        var = sum((v - mean) ** 2 for v in values) / len(values)
+        sd = var ** 0.5
+        if sd <= 0:
+            continue
+        for night in nights:
+            value = (night.get(metric) or {}).get(key)
+            if value is not None and abs(value - mean) > 2 * sd:
+                night["anomalies"].append(metric)
+    return nights
+
+
+@api.get("/nights")
+def nights_list():
+    """Recorded Sleeping windows, newest first, for the night-history widget.
+    `range` accepts the usual 7d/30d/60d. Each night carries its stored
+    summary plus an `anomalies` list naming the metrics that sit >2 SD from
+    the window's own mean."""
+    try:
+        since = parse_range("30d")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    nights = db.list_night_summaries(since)
+    return jsonify({"range": request.args.get("range", "30d"),
+                    "nights": _flag_night_anomalies(nights)})
+
+
+@api.get("/nights/<night>")
+def night_detail(night: str):
+    """One night's full stored summary."""
+    row = db.get_night_summary(night)
+    if row is None:
+        return jsonify({"error": "no summary for that night"}), 404
+    return jsonify(row)
+
+
+@api.delete("/nights/<night>")
+def night_delete(night: str):
+    """Drop a recorded night. Exists because a stray Sleeping toggle writes a
+    junk 4-minute 'night' that would otherwise sit in the history forever and
+    drag the averages the anomaly flags are measured against."""
+    if not db.delete_night_summary(night):
+        return jsonify({"error": "no summary for that night"}), 404
+    log.info("Night summary %s deleted", night)
+    return jsonify({"deleted": night})
+
+
 @api.get("/presence")
 def presence_state():
     """Current presence, plus whether a departure is waiting out its grace."""

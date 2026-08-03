@@ -23,6 +23,7 @@ module carries its own DDL and init_db(), called alongside this one.
 import json
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 
 from . import config
@@ -66,6 +67,18 @@ CREATE TABLE IF NOT EXISTS scenes (
     name   TEXT NOT NULL UNIQUE,
     states TEXT NOT NULL              -- JSON: device name -> partial target state
 );
+
+-- One row per Sleeping window, written at the Sleeping -> Home transition.
+-- settings.last_sleep_summary only ever holds the most recent night; this is
+-- what makes a history reviewable. Keyed by the WAKE morning's local date, the
+-- same anchor app/health.py uses for its nights, so the two line up.
+CREATE TABLE IF NOT EXISTS night_summaries (
+    night    TEXT PRIMARY KEY,        -- local "YYYY-MM-DD" of the morning
+    from_ts  REAL NOT NULL,
+    to_ts    REAL NOT NULL,
+    summary  TEXT NOT NULL            -- the same JSON as last_sleep_summary
+);
+CREATE INDEX IF NOT EXISTS idx_night_from ON night_summaries (from_ts);
 """
 
 # Alert thresholds: a reading outside [min, max] flags its widget on the
@@ -330,6 +343,58 @@ def set_presence(state: str, since: float | None,
     set_setting("presence", {"state": state, "since": since,
                              "last_event": last_event,
                              "last_event_at": last_event_at})
+
+
+def save_night_summary(from_ts: float, to_ts: float, summary: dict) -> None:
+    """Record one night so it can be reviewed later. Keyed by the wake
+    morning's local date; re-running a night replaces it rather than
+    duplicating (a re-activated Sleeping keeps its original start)."""
+    night = datetime.fromtimestamp(to_ts).strftime("%Y-%m-%d")
+    with connect() as conn:
+        conn.execute(
+            """INSERT INTO night_summaries (night, from_ts, to_ts, summary)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(night) DO UPDATE SET
+                   from_ts = excluded.from_ts,
+                   to_ts   = excluded.to_ts,
+                   summary = excluded.summary""",
+            (night, from_ts, to_ts, json.dumps(summary)),
+        )
+
+
+def list_night_summaries(since: float | None = None) -> list[dict]:
+    """Newest first. `summary` is the full stored payload per night."""
+    sql = "SELECT night, from_ts, to_ts, summary FROM night_summaries"
+    args: tuple = ()
+    if since is not None:
+        sql += " WHERE from_ts >= ?"
+        args = (since,)
+    sql += " ORDER BY from_ts DESC"
+    with connect() as conn:
+        rows = conn.execute(sql, args).fetchall()
+    return [{"night": r["night"], "from": r["from_ts"], "to": r["to_ts"],
+             **json.loads(r["summary"])} for r in rows]
+
+
+def get_night_summary(night: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT night, from_ts, to_ts, summary FROM night_summaries WHERE night = ?",
+            (night,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"night": row["night"], "from": row["from_ts"], "to": row["to_ts"],
+            **json.loads(row["summary"])}
+
+
+def delete_night_summary(night: str) -> bool:
+    """-> True if a row was removed. A stray Sleeping toggle records a junk
+    few-minute 'night'; leaving it in skews the mean the anomaly flags are
+    measured against, so it needs to be removable."""
+    with connect() as conn:
+        cur = conn.execute("DELETE FROM night_summaries WHERE night = ?", (night,))
+        return cur.rowcount > 0
 
 
 def get_active_scene() -> dict | None:

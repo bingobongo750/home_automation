@@ -130,6 +130,9 @@ def activate(name: str, wake_time: str | None = None, *,
         if prev and prev["name"] == "Sleeping" and scene["name"] == "Home":
             summary = _compute_sleep_summary(prev["activated_at"], now)
             db.set_setting("last_sleep_summary", summary)
+            # ...and keep it, so nights can be reviewed later. settings only
+            # ever holds the most recent one.
+            db.save_night_summary(prev["activated_at"], now, summary)
             log.info("Overnight summary stored for %.1fh Sleeping window",
                      (now - prev["activated_at"]) / 3600)
 

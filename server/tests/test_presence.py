@@ -424,5 +424,85 @@ class SummaryFiresOnEveryExitFromAwayTestCase(unittest.TestCase):
         self.assertFalse(r["away_summary_generated"])
 
 
+class NightHistoryTestCase(unittest.TestCase):
+    """Nights are persisted per-window so a history exists at all — settings
+    only ever held the most recent one."""
+
+    def setUp(self):
+        _reset()
+        with db.connect() as conn:
+            conn.execute("DELETE FROM night_summaries")
+        app = Flask(__name__)
+        app.register_blueprint(api)
+        self.client = app.test_client()
+
+    def seed(self, days, temp_avg=21.5, got_up=1):
+        now = time.time()
+        to_ts = now - days * 86400
+        db.save_night_summary(to_ts - 7 * 3600, to_ts, {
+            "temp": {"min": 20.0, "max": 23.0, "avg": temp_avg},
+            "hum": {"min": 40.0, "max": 50.0, "avg": 45.0},
+            "co2": {"avg": 700, "start": 500, "end": 900, "delta": 400,
+                    "rose_significantly": True},
+            "motion": {"count": got_up, "samples": 20, "events": [to_ts - 3 * 3600]},
+        })
+
+    def test_a_sleeping_window_is_recorded(self):
+        scenes.activate("Sleeping", "09:30")
+        scenes.activate("Home")
+        self.assertEqual(len(db.list_night_summaries()), 1)
+
+    def test_listing_is_newest_first_and_range_filtered(self):
+        for d in (1, 3, 40):
+            self.seed(d)
+        nights = self.client.get("/api/nights?range=30d").get_json()["nights"]
+        self.assertEqual(len(nights), 2, "the 40-day-old night is outside 30d")
+        self.assertGreater(nights[0]["from"], nights[1]["from"])
+
+    def test_outliers_are_flagged_relative_to_the_window(self):
+        for d in range(1, 9):
+            self.seed(d, temp_avg=21.5)
+        self.seed(9, temp_avg=30.0)     # the odd one out
+        nights = self.client.get("/api/nights?range=60d").get_json()["nights"]
+        odd = [n for n in nights if n["temp"]["avg"] == 30.0][0]
+        normal = [n for n in nights if n["temp"]["avg"] == 21.5][0]
+        self.assertIn("temp", odd["anomalies"])
+        self.assertNotIn("temp", normal["anomalies"])
+
+    def test_too_few_nights_flags_nothing(self):
+        """With three samples every one of them looks like an outlier."""
+        self.seed(1, temp_avg=21.0)
+        self.seed(2, temp_avg=30.0)
+        nights = self.client.get("/api/nights?range=30d").get_json()["nights"]
+        self.assertTrue(all(not n["anomalies"] for n in nights))
+
+    def test_a_restless_night_is_flagged_on_its_own(self):
+        self.seed(1, got_up=6)
+        nights = self.client.get("/api/nights?range=30d").get_json()["nights"]
+        self.assertIn("motion", nights[0]["anomalies"])
+
+    def test_detail_and_404(self):
+        self.seed(1)
+        night = self.client.get("/api/nights?range=30d").get_json()["nights"][0]["night"]
+        self.assertEqual(self.client.get(f"/api/nights/{night}").status_code, 200)
+        self.assertEqual(self.client.get("/api/nights/1999-01-01").status_code, 404)
+
+    def test_a_junk_night_can_be_deleted(self):
+        """A stray Sleeping toggle records a few-minute night that would
+        otherwise drag the mean the anomaly flags are measured against."""
+        self.seed(1)
+        night = self.client.get("/api/nights?range=30d").get_json()["nights"][0]["night"]
+        self.assertEqual(self.client.delete(f"/api/nights/{night}").status_code, 200)
+        self.assertEqual(len(db.list_night_summaries()), 0)
+        self.assertEqual(self.client.delete(f"/api/nights/{night}").status_code, 404)
+
+    def test_re_running_a_night_replaces_it(self):
+        self.seed(1, temp_avg=21.0)
+        self.seed(1, temp_avg=22.0)
+        nights = db.list_night_summaries()
+        self.assertEqual(len(nights), 1)
+        self.assertEqual(nights[0]["temp"]["avg"], 22.0)
+
+
 if __name__ == "__main__":
     unittest.main()
