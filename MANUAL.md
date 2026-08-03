@@ -994,26 +994,34 @@ the answer to "what was left?" months from now.
 | Service | `homehub`, enabled, verified to survive a reboot unattended |
 | Checkout | `~/home_automation`, `.env` at repo root (mode 600, gitignored) |
 | Serial | `/dev/serial/by-id/usb-Arduino__www.arduino.cc__Arduino_Due_Prog._Port_4423631373535120D042-if00` |
-| Dashboard | `http://192.168.0.188:8000` (LAN only until Tailscale is up) |
+| Dashboard | `http://hub:8000` on the tailnet, or `http://192.168.0.188:8000` on the LAN |
+| Tailnet | `hub` = `100.103.160.27` (`hub.tailc13935.ts.net`), MagicDNS resolving |
 
 **Done** — §7.1 image · §7.2 first boot + journal cap · §7.3 code + venv · §7.4 serial
-by-id, `dialout` · §7.5 `.env` · §7.7 service (reboot-tested) · §7.9 *on-card half* of
-backups.
+by-id, `dialout` · §7.5 `.env` · §7.7 service (reboot-tested) · §7.8 Tailscale (node
+joined, dashboard verified on the tailnet) · §7.9 *on-card half* of backups.
 
 Started fresh rather than migrating the Mac's database (§7.6) — the Pi reseeded its
 `devices` rows from `.env` on first run.
 
 **Still outstanding**
 
-1. **Tailscale (§7.8)** — installed, `tailscaled` enabled and running, but **logged
-   out**. Any previously printed login URL will have expired; get a fresh one with:
+1. **Tailscale key expiry (§7.8)** — the node is joined and working, but its key
+   **expires 2027-01-30**. Disable that: admin console → **Machines** → `hub` → **⋯**
+   → **Disable key expiry**.
+
+   This is the one step that rots silently. When a node key expires the Pi drops off
+   the tailnet while continuing to run perfectly on the LAN — the dashboard simply
+   stops answering remotely, nothing on the box looks wrong, and health ingest stops
+   with it. Check the current state any time with:
 
    ```bash
-   ssh louis@192.168.0.188 'sudo tailscale up --hostname=hub'
+   ssh louis@192.168.0.188 'sudo tailscale status --json' | grep -i keyexpiry
    ```
 
-   Until this is done the dashboard is LAN-only, and every `hub:8000` address
-   elsewhere in this manual (§7.10 especially) is not yet reachable.
+   Tailscale is also **not yet installed on the Mac or the phone** — the tailnet has
+   only the Pi on it, so `hub:8000` resolves from nothing else yet. Mac:
+   `brew install --cask tailscale`. Phone: App Store, same account (needed for §7.10).
 
 2. **Off-box backup (§7.9)** — the on-card rolling weekly `.backup` cron is live and
    tested. The second cron line, the one that matters when the card dies, is
