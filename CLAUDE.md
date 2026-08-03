@@ -7,7 +7,7 @@ relitigate them without a clear reason.
 ## Project summary
 
 A DIY smart home hub. A Raspberry Pi 4 (4GB RAM) runs 24/7 as the central server, sensor
-database, and web dashboard, booting from a 1TB USB-C SSD. An old MacBook (8GB RAM) that
+database, and web dashboard, booting from a 32GB microSD card. An old MacBook (8GB RAM) that
 previously held this role stays around as a fallback/dev machine — it can run the full
 stack under `MOCK_HARDWARE=1` for development, or take over host duty if the Pi is down,
 but the Pi is the source of truth whenever it's up. An Arduino Due handles all wired,
@@ -279,9 +279,17 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
 - Serial: `pyserial` for Arduino communication over USB.
 - Database: SQLite for sensor time-series data and device state history.
 - Remote access: Tailscale (assume it's available; don't build custom auth/tunneling).
-- Storage: the Pi boots from and runs entirely off the 1TB USB-C SSD — OS, the sensor DB,
-  backups, and file sharing all live on that one drive. Don't assume the DB has to live
-  on a separate/internal disk.
+- Storage: the Pi boots from and runs entirely off a 32GB high-endurance microSD card —
+  OS, the sensor DB and its backups all live on it. Nothing binds the hub to a storage
+  medium (`DB_PATH` is an env var, the server has nothing machine-specific), so this is
+  revisitable without code changes. Two consequences to keep in mind: nothing in the
+  codebase ever prunes `readings`/`power_readings` — no retention, no downsampling, no
+  `VACUUM`, so the DB grows ~3GB/year, linearly and forever — and the card is the most
+  likely component on the box to fail, so the nightly `.backup` is copied off the Pi
+  rather than kept only on the card. See `MANUAL.md` §7.1 and §7.9.
+  (An earlier plan booted the Pi from a 1TB USB-C SSD that would also have served Time
+  Machine and file shares over Samba. Dropped — the SSD stays direct-attached to the
+  Mac. If a NAS role ever comes back it's a new decision, not a revival of that one.)
 - Fallback dev machine: the old MacBook can run the full stack (under `MOCK_HARDWARE=1`
   for hardware-free development, or for real against the Arduino/WiFi devices if it's
   ever swapped in as host). Don't write anything into the server that assumes it's
