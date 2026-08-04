@@ -42,8 +42,12 @@ serve HTTP, call REST APIs.
      the cupboard, and "Room LED", the room's ambient bulb) — self-contained WiFi
      RGBW bulbs (local JSON-RPC API over HTTP, no cloud required) that screw into
      an ordinary E27 fixture; the fixture only ever supplies mains power, all
-     control electronics live in the bulb itself. Both are seeded as placeholder
-     IPs; neither is physically installed yet.
+     control electronics live in the bulb itself. **Both are provisioned and
+     reachable as of 4 Aug 2026** (`192.168.0.61` / `.62`, both answering
+     JSON-RPC) — this section previously said neither was installed. "Cupboard"
+     is confirmed to physically light the room the BH1750 sees: dimming it
+     134 → 94/255 moved the measured level 8 → 6 lx, which is what the
+     auto-lighting loop closes on.
    No cloud account or app is required for runtime control, only initial WiFi
    provisioning. Devices are modeled generically (see below) so further WiFi plugs or
    lighting zones can register without rewriting existing device logic.
