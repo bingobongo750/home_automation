@@ -1374,6 +1374,9 @@ async function loadDetail(widget) {
       renderLegend(detail, POWER_COLOR, null);
       drawChart(detail.querySelector(".chart"), points,
         { unit: "W", decimals: 1, color: POWER_COLOR,
+          // watts integrate into energy; a dragged span on this chart should
+          // answer "what did that cost me", not just "what was the average draw"
+          energy: true,
           thresholds: thresholds ? thresholds.power : null });
       setStat(widget, "avg_24h_w", stats.avg_24h_w, "W");
       setStat(widget, "kwh_24h", stats.kwh_24h, "kWh");
@@ -1692,8 +1695,31 @@ function drawChart(container, points, opts) {
     const strong = document.createElement("span");
     strong.className = "tt-value";
     strong.textContent = `avg ${avg.toFixed(opts.decimals)} ${opts.unit}`;
+    readout.append(strong);
+
+    // Watts are a rate, so a span of them integrates into energy — the number
+    // you actually want off a power chart ("what did that run cost me"), which
+    // an average draw alone does not give you.
+    //
+    // Trapezoidal over the selected points, NOT avg x duration: the series is
+    // bucket-averaged server-side and can have gaps where the plug was
+    // unreachable, and avg x duration silently bills you for those gaps at the
+    // average rate. Trapezoid only ever integrates between samples that exist.
+    if (opts.energy) {
+      let wh = 0;
+      for (let i = 1; i < inside.length; i++) {
+        const dtHours = (inside[i].ts - inside[i - 1].ts) / 3600;
+        wh += ((inside[i].value + inside[i - 1].value) / 2) * dtHours;
+      }
+      const kwh = wh / 1000;
+      const energy = document.createElement("span");
+      energy.className = "tt-value";
+      // Below ~10 Wh, kWh renders as 0.00 and looks broken; show Wh instead.
+      energy.textContent = wh < 10 ? `${wh.toFixed(1)} Wh` : `${kwh.toFixed(3)} kWh`;
+      readout.append(energy);
+    }
+
     readout.append(
-      strong,
       document.createTextNode(
         `min ${Math.min(...vals).toFixed(opts.decimals)} · ` +
         `max ${Math.max(...vals).toFixed(opts.decimals)} · ` +

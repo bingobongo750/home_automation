@@ -44,7 +44,9 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
 - `GET /devices/:id/power/stats` → *wifi_plug only.*
   `{"avg_24h_w", "kwh_24h", "avg_7d_w"}` — `kwh_24h` is average draw
   integrated over the hours actually covered by samples, so it's an
-  estimate (≈) rather than metered energy.
+  estimate (≈) rather than metered energy. The dashboard's drag-to-select on a
+  power chart computes the same quantity for an arbitrary span, trapezoidally
+  over the samples inside it — the two agree to rounding on a known series.
 
 ## Lighting (bulb zones)
 

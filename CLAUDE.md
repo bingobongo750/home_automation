@@ -472,7 +472,12 @@ keep this list in sync when endpoints change:
   with the rest of that plan).
 - **Drag across any expanded chart** to select a time span and get its statistics
   (average headlined, plus min/max, the span, its duration and the sample count) in a
-  readout under the chart. The crosshair already answers "what was it at this moment";
+  readout under the chart. **Power charts additionally show energy** (kWh, or Wh below
+  10 Wh where kWh would render as 0.00) — watts are a rate, so a span of them integrates
+  into the number you actually want off a power chart. Trapezoidal over the samples in
+  the selection, *not* avg × duration: the series is bucket-averaged and can have gaps
+  where the plug was unreachable, and avg × duration silently bills those gaps at the
+  average rate. The crosshair already answers "what was it at this moment";
   this answers "what was it across this stretch", which otherwise means eyeballing a
   line. Selection is horizontal only — the question is always about a time range, never
   a value range — and clears on a plain click, a range/metric change, or closing the
