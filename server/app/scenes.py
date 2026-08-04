@@ -150,14 +150,21 @@ def activate(name: str, wake_time: str | None = None, *,
             # house dark and crossed the room to the dashboard. Either way the
             # last stretch of motion, CO2 and lux is you.
             until = now - config.PRESENCE_ARRIVAL_TRIM_S
-            if until - prev["activated_at"] >= config.PRESENCE_SUMMARY_MIN_S:
+            absence_s = now - prev["activated_at"]
+            # Gate on the ACTUAL absence, not the trimmed window. These two
+            # settings answer different questions — the threshold asks "was I
+            # away long enough to care?", the trim asks "which data do I
+            # trust?" — and multiplying them together made a documented 10 min
+            # minimum silently behave as 12, with the log reporting the trimmed
+            # figure so it did not even match what the user experienced.
+            if absence_s >= config.PRESENCE_SUMMARY_MIN_S and until > prev["activated_at"]:
                 away_summary = _compute_away_summary(prev["activated_at"], until)
                 db.set_setting("last_away_summary", away_summary)
                 log.info("Away summary stored for a %.0f min absence (disturbed=%s)",
-                         (now - prev["activated_at"]) / 60, away_summary["disturbed"])
+                         absence_s / 60, away_summary["disturbed"])
             else:
-                log.info("Absence too short for a summary (%.0f min)",
-                         max(until - prev["activated_at"], 0) / 60)
+                log.info("Absence too short for a summary (%.1f min, need %.0f)",
+                         absence_s / 60, config.PRESENCE_SUMMARY_MIN_S / 60)
 
         # Re-activating the current scene (e.g. changing the wake time mid-
         # night) keeps the original activation time — the summary window

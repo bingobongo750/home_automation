@@ -504,5 +504,51 @@ class NightHistoryTestCase(unittest.TestCase):
         self.assertEqual(nights[0]["temp"]["avg"], 22.0)
 
 
+class SummaryThresholdBoundaryTestCase(unittest.TestCase):
+    """The documented minimum must be the ACTUAL minimum.
+
+    The gate used to compare the trimmed window against the threshold, so a
+    600 s minimum plus a 120 s trim silently required 720 s. A real 10-minute
+    absence produced nothing and the log reported the trimmed figure, which did
+    not even match the clock.
+    """
+
+    def setUp(self):
+        _reset()
+        app = Flask(__name__)
+        app.register_blueprint(api)
+        self.client = app.test_client()
+
+    def away_for(self, seconds):
+        now = time.time()
+        since = now - seconds
+        db.set_active_scene("Away", since)
+        db.set_presence("away", since, "departed", since)
+        for i in range(10):
+            db.insert_reading("motion", 1, ts=since + seconds / 2 + i * 5)
+        return self.client.post("/api/scenes/Home/activate", json={}).get_json()
+
+    def test_exactly_the_minimum_produces_a_summary(self):
+        r = self.away_for(config.PRESENCE_SUMMARY_MIN_S)
+        self.assertTrue(r["away_summary_generated"],
+                        "an absence of exactly the documented minimum must count")
+
+    def test_just_over_the_minimum_produces_one(self):
+        r = self.away_for(config.PRESENCE_SUMMARY_MIN_S + 5)
+        self.assertTrue(r["away_summary_generated"])
+
+    def test_just_under_the_minimum_does_not(self):
+        r = self.away_for(config.PRESENCE_SUMMARY_MIN_S - 30)
+        self.assertFalse(r["away_summary_generated"])
+
+    def test_the_trim_does_not_add_to_the_threshold(self):
+        """The specific regression: minimum + trim must not become the bar."""
+        r = self.away_for(config.PRESENCE_SUMMARY_MIN_S + 10)
+        self.assertTrue(r["away_summary_generated"])
+        summary = db.get_setting("last_away_summary")
+        # ...but the window is still trimmed, so it is shorter than the absence
+        self.assertLess(summary["duration_s"], config.PRESENCE_SUMMARY_MIN_S + 10)
+
+
 if __name__ == "__main__":
     unittest.main()
