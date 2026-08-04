@@ -62,14 +62,6 @@ bool bmeOk = false;
 bool bhOk = false;
 bool scdOk = false;
 
-// Which address the BME actually answered on, so a re-init after a bus fault
-// retries the one that worked instead of probing both again.
-uint8_t bmeAddr = 0;
-
-// Runtime I2C recovery bookkeeping (see maybeRecoverI2C).
-const unsigned long I2C_RETRY_INTERVAL_MS = 30000;
-unsigned long lastI2CRetryMs = 0;
-
 // ---- State ----
 int lastMotion = 0;
 String rxBuffer;  // reserve()d in setup to limit heap fragmentation
@@ -175,81 +167,6 @@ void scanI2C() {
 // stale value is far better than a silent lockup. Re-issuing setSampling()
 // writes ctrl_meas with MODE_FORCED, and that write is what starts a single
 // conversion.
-// Is the BME280 still actually on the bus?
-//
-// WHY THIS EXISTS: Adafruit_BME280::readTemperature() has no way to report an
-// I2C failure. A device that has stopped ACKing returns 0xFF for every byte,
-// and the Bosch compensation math — using the calibration coefficients cached
-// back at begin() — turns that into a saturated but perfectly well-formed
-// number. Observed on 4 Aug 2026: TEMP:180.0 and HUM:100.0, bit-identical
-// every 5 s for minutes, while the BH1750 and SCD40 on the same bus went
-// silent. Those two check their reads and skip printing on error (see
-// reportSensors), so the BME was the only sensor on a dead bus still
-// publishing, and it published nonsense that looked like data.
-//
-// 100.0 %RH is not a coincidence: it is exactly the ceiling of Bosch's
-// humidity compensation (var5 clamps at 419430400 >> 12 / 1024), i.e. the
-// arithmetic saturating, not a wet room.
-//
-// The check is a liveness probe on the DEVICE, not a plausibility filter on
-// the value — reading the chip-ID register (0xD0, always 0x60 on a BME280)
-// costs one byte per cycle and answers "is anyone there" without any opinion
-// about what a reasonable temperature is. Keeping those separate matters: the
-// host deliberately stores implausible readings rather than hiding a failing
-// sensor, so the firmware must not start silently laundering them either. No
-// reading at all is honest, and the dashboard already renders a metric that
-// stopped arriving as stale.
-static bool bmeAlive() {
-  if (bmeAddr == 0) return false;
-  Wire.beginTransmission(bmeAddr);
-  Wire.write(0xD0);                       // chip-ID register
-  if (Wire.endTransmission() != 0) return false;
-  if (Wire.requestFrom(bmeAddr, (uint8_t)1) != 1) return false;
-  return Wire.read() == 0x60;             // BME280
-}
-
-// Bring a wedged or briefly-disconnected bus back without a power cycle.
-//
-// recoverI2C() already existed but only ran in setup(), which does not help a
-// box that has been up for days when a slave latches SDA low or a jumper is
-// reseated — exactly the "self-healing on a 24/7 box" case its own comment
-// describes. Runs at most every I2C_RETRY_INTERVAL_MS and only while at least
-// one I2C sensor is down, so a healthy bus never pays for it and a permanently
-// dead one does not thrash. Wire has to be released first, because
-// recoverI2C() drives SDA/SCL as GPIO.
-static void bmeMeasure();  // defined below; needed by the re-init path here
-
-static void maybeRecoverI2C() {
-  if (bmeOk && bhOk && scdOk) return;
-  unsigned long now = millis();
-  if (now - lastI2CRetryMs < I2C_RETRY_INTERVAL_MS) return;
-  lastI2CRetryMs = now;
-
-  Serial.println(F("# I2C: sensor down — attempting bus recovery + re-init"));
-  Wire.end();
-  recoverI2C();
-  Wire.begin();
-
-  if (!bmeOk) {
-    if (bme.begin(0x76))      { bmeOk = true; bmeAddr = 0x76; }
-    else if (bme.begin(0x77)) { bmeOk = true; bmeAddr = 0x77; }
-    if (bmeOk) {
-      bmeMeasure();  // back out of the library's free-running default
-      Serial.println(F("# BME280: recovered"));
-    }
-  }
-  if (!bhOk && (bhOk = lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE))) {
-    Serial.println(F("# BH1750: recovered"));
-  }
-  // The SCD40 is re-begun unconditionally on a recovery pass, not gated on
-  // scdOk. readMeasurement() returning false is its NORMAL state between
-  // self-paced samples, so there is no cheap way to tell "no fresh sample yet"
-  // from "gone" — which means scdOk cannot be trusted to have noticed a bus
-  // fault. begin() just restarts periodic measurement, so re-running it costs
-  // nothing on a device that was fine.
-  scdOk = co2Sensor.begin();
-}
-
 static void bmeMeasure() {
   bme.setSampling(Adafruit_BME280::MODE_FORCED,
                   Adafruit_BME280::SAMPLING_X1,    // temperature
@@ -279,8 +196,7 @@ void setup() {
   scanI2C();  // what is actually on the bus, before any driver touches it
 
   // Try both common BME280 addresses (0x76 on most clone breakouts, 0x77 Adafruit)
-  if (bme.begin(0x76))      { bmeOk = true; bmeAddr = 0x76; }
-  else if (bme.begin(0x77)) { bmeOk = true; bmeAddr = 0x77; }
+  bmeOk = bme.begin(0x76) || bme.begin(0x77);
   // Drop straight out of the library's free-running default (see bmeMeasure)
   // so the sensor is not self-heating while the other drivers start up.
   if (bmeOk) bmeMeasure();
@@ -304,8 +220,6 @@ void loop() {
     Serial.println(motion);
   }
 
-  maybeRecoverI2C();  // no-op while every I2C sensor is healthy
-
   unsigned long now = millis();
   if (now - lastReportMs >= REPORT_INTERVAL_MS) {
     lastReportMs = now;
@@ -316,14 +230,6 @@ void loop() {
 // ---------------------------------------------------------------- reporting
 
 void reportSensors() {
-  // Liveness first: bmeOk was latched at boot, and a part that has since
-  // dropped off the bus still returns saturated garbage rather than an error
-  // (see bmeAlive). Publishing nothing is the same contract BH1750 and SCD40
-  // already honour below.
-  if (bmeOk && !bmeAlive()) {
-    bmeOk = false;
-    Serial.println(F("# BME280: stopped responding (chip ID read failed) — no TEMP/HUM until it returns"));
-  }
   if (bmeOk) {
     bmeMeasure();  // forced mode sleeps between reads — wake it for this one
     Serial.print(F("TEMP:"));
@@ -337,11 +243,6 @@ void reportSensors() {
     if (lux >= 0) {  // negative return = read error
       Serial.print(F("LUX:"));
       Serial.println((long)lux);
-    } else {
-      // Used to just skip the line, which left a dead bus looking like a dark
-      // room forever. Marking it down is what arms maybeRecoverI2C().
-      bhOk = false;
-      Serial.println(F("# BH1750: read error — no LUX until it returns"));
     }
   }
 
