@@ -1,3 +1,13 @@
 flask>=3.0
 pyserial>=3.5
 requests>=2.31
+
+# Apple Calendar (CalDAV) import — see app/caldav_sync.py. The CalDAV protocol
+# itself is hand-rolled over `requests` rather than pulling in the `caldav`
+# library, which drags in lxml, an HTTP/3 stack and 16 packages in total for
+# what amounts to four XML requests. These two are pure-Python wheels and cover
+# the part genuinely not worth hand-rolling: iCalendar parsing and RRULE
+# expansion (recurrence rules are a deep spec and getting them subtly wrong is
+# worse than not having them).
+icalendar>=6.0
+recurring-ical-events>=3.0

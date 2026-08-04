@@ -1903,3 +1903,25 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 /* the chart is a drag surface now, so say so and stop text selection fighting it */
 .chart svg { cursor: crosshair; user-select: none; -webkit-user-select: none; }
+
+/* Events mirrored from Apple Calendar. Distinct but not louder than your own
+   entries — a dashed edge reads as "not yours to edit" without competing with
+   the category colours that carry the actual information. */
+.cal-event.cal-imported,
+.cal-chip.cal-imported {
+  border-style: dashed;
+  border-width: 1px;
+  opacity: 0.92;
+}
+/* No glyph marker: a private-use icon font renders as tofu off-Apple, and a
+   mystery box is worse than no marker at all. The dashed edge plus the
+   read-only dialog carry it. */
+
+/* A read-only event dialog: disabled fields should look inert rather than
+   broken, so the user reads "this is a mirror", not "this is stuck". */
+.dialog-readonly input:disabled,
+.dialog-readonly select:disabled,
+.dialog-readonly textarea:disabled {
+  opacity: 0.75;
+  cursor: default;
+}

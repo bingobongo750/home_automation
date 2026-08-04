@@ -60,6 +60,25 @@ LIGHTING_AUTO_BRIGHTNESS = int(os.environ.get("LIGHTING_AUTO_BRIGHTNESS", "180")
 #                 PIR emits a sample per cycle while it sees movement, so
 #                 counting raw rows reports "47 disturbances" for one person
 #                 crossing the room.
+# Apple Calendar import over CalDAV (app/caldav_sync.py). Read-only: imported
+# events are mirrors and nothing is ever written back, so there is no sync
+# conflict to resolve and no need to represent an RFC 5545 rule the planner
+# cannot edit. Unset CALDAV_USERNAME disables the whole feature.
+#
+# CALDAV_PASSWORD must be an Apple **app-specific password**
+# (appleid.apple.com -> Sign-In and Security), never the account password: it is
+# scoped, revocable on its own, and does not carry 2FA.
+CALDAV_URL = os.environ.get("CALDAV_URL", "https://caldav.icloud.com")
+CALDAV_USERNAME = os.environ.get("CALDAV_USERNAME", "")
+CALDAV_PASSWORD = os.environ.get("CALDAV_PASSWORD", "")
+# Comma-separated display names to import; empty imports every calendar found.
+CALDAV_CALENDARS = os.environ.get("CALDAV_CALENDARS", "")
+CALDAV_SYNC_INTERVAL = int(os.environ.get("CALDAV_SYNC_INTERVAL", "900"))  # 15 min
+# Rolling import window. Past days are kept so the morning summary can still
+# describe a day that has already started.
+CALDAV_WINDOW_PAST_DAYS = int(os.environ.get("CALDAV_WINDOW_PAST_DAYS", "7"))
+CALDAV_WINDOW_FUTURE_DAYS = int(os.environ.get("CALDAV_WINDOW_FUTURE_DAYS", "90"))
+
 PRESENCE_DEPART_GRACE_S = int(os.environ.get("PRESENCE_DEPART_GRACE_S", "120"))
 PRESENCE_ARRIVAL_TRIM_S = int(os.environ.get("PRESENCE_ARRIVAL_TRIM_S", "120"))
 PRESENCE_SUMMARY_MIN_S = int(os.environ.get("PRESENCE_SUMMARY_MIN_S", "600"))

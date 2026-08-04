@@ -7,7 +7,7 @@ from pathlib import Path
 
 from flask import Flask
 
-from . import config, db, health, lighting, planner, poller, scenes, serial_reader
+from . import caldav_sync, config, db, health, lighting, planner, poller, scenes, serial_reader
 from .api import api
 
 DASHBOARD_DIR = Path(__file__).resolve().parent.parent.parent / "dashboard"
@@ -30,6 +30,7 @@ def create_app() -> Flask:
     serial_reader.start()
     poller.start()
     lighting.start()
+    caldav_sync.start()   # no-op unless CALDAV_USERNAME is set
     # After the device clients exist: re-arm (or fire, if overdue) a pending
     # Sleeping->Home wake persisted before the last shutdown.
     scenes.init()

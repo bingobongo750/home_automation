@@ -6,7 +6,7 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from . import db, lighting, poller, presence, scenes, serial_reader, shelly_bulb
+from . import caldav_sync, db, lighting, poller, presence, scenes, serial_reader, shelly_bulb
 from .mystrom import PlugError
 from .shelly_bulb import BulbError
 
@@ -463,6 +463,33 @@ def night_delete(night: str):
         return jsonify({"error": "no summary for that night"}), 404
     log.info("Night summary %s deleted", night)
     return jsonify({"deleted": night})
+
+
+@api.get("/calendar/status")
+def calendar_status():
+    """Whether CalDAV import is configured, and how the last sync went."""
+    return jsonify(caldav_sync.status())
+
+
+@api.post("/calendar/sync")
+def calendar_sync_now():
+    """Force a sync rather than waiting out CALDAV_SYNC_INTERVAL — for setup
+    and for after editing something in Calendar you want to see now."""
+    if not caldav_sync.configured():
+        return jsonify({"error": "CalDAV is not configured; set CALDAV_USERNAME "
+                                 "and CALDAV_PASSWORD in .env on the hub"}), 400
+    return jsonify(caldav_sync.sync())
+
+
+@api.get("/calendar/calendars")
+def calendar_list():
+    """Calendar names in the account — for choosing CALDAV_CALENDARS."""
+    if not caldav_sync.configured():
+        return jsonify({"error": "CalDAV is not configured"}), 400
+    try:
+        return jsonify({"calendars": caldav_sync.discover_calendars()})
+    except caldav_sync.CalDavError as exc:
+        return jsonify({"error": str(exc)}), 502
 
 
 @api.get("/presence")

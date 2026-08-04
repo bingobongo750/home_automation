@@ -51,10 +51,12 @@ CREATE TABLE IF NOT EXISTS events (
     recurrence   TEXT NOT NULL DEFAULT 'none',  -- none | daily | weekly
     category     TEXT,                   -- one of CATEGORIES, or NULL
     all_day      INTEGER NOT NULL DEFAULT 0,  -- 1: start/end are midnight bounds, end exclusive
-    external_uid TEXT,                   -- reserved for a future CalDAV sync layer
+    external_uid TEXT,                   -- upstream UID for CalDAV-imported rows
+    source       TEXT NOT NULL DEFAULT 'local',  -- local | caldav
     created_at   REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_start ON events (start_ts);
+CREATE INDEX IF NOT EXISTS idx_events_source ON events (source);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id           INTEGER PRIMARY KEY,
@@ -101,6 +103,10 @@ def init_db() -> None:
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
         if "category" not in cols:
             conn.execute("ALTER TABLE events ADD COLUMN category TEXT")
+        if "source" not in cols:
+            # Everything that predates the CalDAV import is yours, by
+            # definition — nothing else could have written it.
+            conn.execute("ALTER TABLE events ADD COLUMN source TEXT NOT NULL DEFAULT 'local'")
         if "all_day" not in cols:
             conn.execute("ALTER TABLE events ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0")
             # grandfather the pre-flag convention: a midnight start with no
@@ -165,6 +171,10 @@ def _occurrence_json(row, start: float, end: float | None) -> dict:
         "series_start": row["start_ts"],
         "series_end": row["end_ts"],
         "external_uid": row["external_uid"],
+        # "caldav" rows are read-only mirrors of Apple Calendar; the dashboard
+        # renders them distinctly and blocks editing, and a re-import replaces
+        # them wholesale.
+        "source": row["source"] if "source" in row.keys() else "local",
     }
 
 
@@ -376,6 +386,18 @@ def events_create():
     return jsonify(_event_row_json(_get_event(event_id))), 201
 
 
+
+def _readonly_if_imported(row):
+    """CalDAV rows are mirrors of Apple Calendar. Editing one would be undone
+    by the next sync without warning, which is worse than refusing — and
+    deleting one would resurrect it 15 minutes later."""
+    if row is not None and "source" in row.keys() and row["source"] == "caldav":
+        return jsonify({"error": "this event comes from Apple Calendar and is "
+                                 "read-only here — change it in Calendar and it "
+                                 "will update on the next sync"}), 409
+    return None
+
+
 @bp.put("/events/<int:event_id>")
 def events_update(event_id: int):
     """Partial update — any subset of title/start/end/notes/recurrence/
@@ -386,6 +408,9 @@ def events_update(event_id: int):
     row = _get_event(event_id)
     if row is None:
         return jsonify({"error": "no such event"}), 404
+    blocked = _readonly_if_imported(row)
+    if blocked:
+        return blocked
     fields, error = _clean_event(request.get_json(silent=True) or {}, partial=True)
     if error:
         return jsonify({"error": error}), 400
@@ -409,8 +434,12 @@ def events_update(event_id: int):
 
 @bp.delete("/events/<int:event_id>")
 def events_delete(event_id: int):
-    if _get_event(event_id) is None:
+    row = _get_event(event_id)
+    if row is None:
         return jsonify({"error": "no such event"}), 404
+    blocked = _readonly_if_imported(row)
+    if blocked:
+        return blocked
     with db.connect() as conn:
         conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
     log.info("Event %d deleted", event_id)

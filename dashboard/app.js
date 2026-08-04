@@ -2274,7 +2274,8 @@ function calBlock(item, dayStart) {
   const { ev, lane, laneCount, top, bottom } = item;
   const el = document.createElement("button");
   el.type = "button";
-  el.className = "cal-event" + (ev.category ? ` cat-${ev.category}` : "");
+  el.className = "cal-event" + (ev.category ? ` cat-${ev.category}` : "")
+    + (ev.source === "caldav" ? " cal-imported" : "");
   el.style.top = `${((top - dayStart) / 3600) * CAL_HOUR_PX + 1}px`;
   el.style.height = `${Math.max(((bottom - top) / 3600) * CAL_HOUR_PX - 2, 19)}px`;
   el.style.left = `${(lane / laneCount) * 100}%`;
@@ -2301,7 +2302,8 @@ function calBlock(item, dayStart) {
 function calChip(ev, withTime, clipStart, clipEnd) {
   const chip = document.createElement("button");
   chip.type = "button";
-  chip.className = "cal-chip" + (ev.category ? ` cat-${ev.category}` : "");
+  chip.className = "cal-chip" + (ev.category ? ` cat-${ev.category}` : "")
+    + (ev.source === "caldav" ? " cal-imported" : "");
   const dot = document.createElement("i");
   dot.className = "cal-dot";
   chip.appendChild(dot);
@@ -2675,6 +2677,24 @@ function openEventDialog(ev, startTs, endTs, allDayHint) {
   del.textContent = ev && ev.recurrence !== "none" ? "Delete series" : "Delete";
   eventNote.textContent = ev && ev.recurrence !== "none" ? "Changes apply to the whole series." : "";
   eventNote.className = "save-note";
+
+  /* Imported events are mirrors of Apple Calendar: an edit here would be
+     silently undone by the next sync and a delete would resurrect it, so the
+     form is shown read-only rather than letting you make a change that will
+     not stick. The API refuses these too (409) — this is the polite half. */
+  const imported = !!(ev && ev.source === "caldav");
+  eventOverlay.classList.toggle("dialog-readonly", imported);
+  [eventTitle, eventStart, eventEnd, eventNotes, eventRecurrence, eventAllday]
+    .forEach((f) => { if (f) f.disabled = imported; });
+  document.querySelectorAll("#event-dialog .cat-btn")
+    .forEach((b) => { b.disabled = imported; });
+  document.getElementById("event-submit").hidden = imported;
+  if (imported) {
+    del.hidden = true;
+    eventNote.textContent = "From Apple Calendar — edit it there and it will "
+      + "update here on the next sync.";
+    eventNote.className = "save-note";
+  }
   eventOverlay.hidden = false;
   document.body.style.overflow = "hidden";
   eventTitle.focus();

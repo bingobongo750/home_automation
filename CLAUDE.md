@@ -289,9 +289,26 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
   `low|medium|high`, `done` with `created_at`/`completed_at`, optional `list`
   grouping tag ("home"/"work"). `POST /api/tasks/:id/complete` is the one-tap
   path (idempotent).
-- Both tables carry an unused `external_uid` column, reserved so a future
-  CalDAV sync layer (e.g. Radicale) can map external UIDs onto rows without a
-  schema rewrite — keep any new planner fields similarly plain.
+- **Apple Calendar import** (`app/caldav_sync.py`): read-only, one way. Imported
+  events are mirrors with `source = 'caldav'` — the API refuses to edit or delete
+  them (409) and the dashboard renders them dashed and opens the dialog locked.
+  Two-way sync is deliberately *not* built: deletions, conflicts and recurring
+  exceptions are where CalDAV goes wrong, and this planner's recurrence model is
+  `none|daily|weekly` rather than RFC 5545, so writing back would be lossy by
+  construction. Apple's RRULEs are instead **flattened into concrete occurrences**
+  across a rolling window, which is what lets a `FREQ=MONTHLY` come across at all.
+  A sync replaces the `caldav` rows wholesale (the only thing that handles upstream
+  deletions correctly) and skips the write entirely when a content hash is
+  unchanged, so an idle calendar doesn't rewrite the table onto the SD card every
+  15 minutes. Local events are never touched.
+  **The protocol is hand-rolled over `requests`** — the `caldav` library pulls in
+  lxml, an HTTP/3 stack and 16 packages for four XML requests, against a documented
+  lightweight-I/O constraint. Only `icalendar` + `recurring-ical-events` were added
+  (pure-Python), for parsing and RRULE expansion, which is the part not worth
+  hand-rolling. Credentials are an Apple **app-specific password** in `.env` on the
+  Pi only. Covered by `server/tests/test_caldav.py`.
+- Both tables carry an `external_uid` column — the upstream UID on imported rows,
+  and reserved on `tasks` for the same purpose; keep any new planner fields plain.
 - **Morning summary integration:** the Sleeping→Home summary embeds
   `planner.morning_snapshot()` under a `planner` key — today's events plus
   open overdue/high-priority tasks (each capped at 10), snapshotted once at
