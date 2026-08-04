@@ -401,8 +401,8 @@ In your router's DHCP settings, add a **static reservation** for the plug's MAC.
 Do not skip this — the hub stores the IP, and a lease change silently breaks the
 device until you notice `PLUG UNREACHABLE` in the logs.
 
-Suggested: `192.168.0.51` for Plug 1, `192.168.0.52` for Plug 2 (matching the
-defaults in `.env.example`).
+Suggested: `192.168.0.51` for the coffee machine, `192.168.0.52` for the desk
+(matching the defaults in `.env.example`).
 
 ### 4.3 Verify before touching the hub
 
@@ -440,8 +440,8 @@ MYSTROM_POLL_INTERVAL=10
 >
 > ```bash
 > sqlite3 data/home.db \
->   "UPDATE devices SET ip='192.168.0.51' WHERE name='Plug 1';
->    UPDATE devices SET ip='192.168.0.52' WHERE name='Plug 2';"
+>   "UPDATE devices SET ip='192.168.0.51' WHERE name='Coffee machine';
+>    UPDATE devices SET ip='192.168.0.52' WHERE name='Desk';"
 > ```
 >
 > Restart the server afterwards — the poller builds its client list at startup.
@@ -452,12 +452,13 @@ respond.
 
 ### 4.5 Naming, rooms, and locking
 
-The seeds are `Plug 1` and `Plug 2`. The `room` column is seeded empty — this hub
+The seeds are `Coffee machine` (.51) and `Desk` (.52) — named for what they
+actually run. The `room` column is seeded empty — this hub
 covers a single room, so a room label would carry no information — but it is still
 there for a future multi-room hub. Rename to match reality:
 
 ```bash
-sqlite3 data/home.db "UPDATE devices SET name='Desk Lamp' WHERE name='Plug 2';"
+sqlite3 data/home.db "UPDATE devices SET name='Desk Lamp' WHERE name='Desk';"
 ```
 
 Scene targets keyed by device *name* reference these strings — if you rename a plug
@@ -644,8 +645,8 @@ should pass.
 | 2 | All five metrics | `curl -s localhost:8000/api/sensors/latest` | `temp`, `hum`, `lux`, `co2`, `motion`, fresh timestamps |
 | 3 | Motion is live | wave at the PIR | Motion widget flips within a second |
 | 4 | History accumulates | leave it an hour, open a widget | Chart has a real curve |
-| 5 | Plug 1 reachable | dashboard toggle | Lamp switches; wattage changes |
-| 6 | Plug 2 reachable | dashboard toggle | As above |
+| 5 | Coffee-machine plug reachable | dashboard toggle | Load switches; wattage changes |
+| 6 | Desk plug reachable | dashboard toggle | As above |
 | 7 | Power history | expand a plug widget | 24 h series + kWh estimate |
 | 8 | Thresholds | gear icon, narrow the temp band | Widget flags immediately |
 | 9 | Scenes | header MODE → Away | Unlocked plugs off; locked ones reported skipped |

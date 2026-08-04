@@ -136,8 +136,8 @@ class SceneTestCase(unittest.TestCase):
     # ----------------------------------------------------------- activation
 
     def test_activate_away_sets_devices_and_suppresses_auto(self):
-        self.plug("Plug 1").set_state(True)
-        self.plug("Plug 2").set_state(True)
+        self.plug("Coffee machine").set_state(True)
+        self.plug("Desk").set_state(True)
         self.zone("Cupboard").set_state(on=True)
         self.zone("Room LED").set_state(on=True)
 
@@ -148,10 +148,10 @@ class SceneTestCase(unittest.TestCase):
         self.assertTrue(all(d["ok"] for d in data["devices"]), data["devices"])
         # the group keys resolved to every actual device
         self.assertEqual({d["device"] for d in data["devices"]},
-                         {"Plug 1", "Plug 2", "Cupboard", "Room LED"})
+                         {"Coffee machine", "Desk", "Cupboard", "Room LED"})
 
-        self.assertFalse(self.plug("Plug 1").report()["relay_on"])
-        self.assertFalse(self.plug("Plug 2").report()["relay_on"])
+        self.assertFalse(self.plug("Coffee machine").report()["relay_on"])
+        self.assertFalse(self.plug("Desk").report()["relay_on"])
         self.assertFalse(self.zone("Cupboard").state()["on"])
         self.assertFalse(self.zone("Room LED").state()["on"])
         self.assertEqual(lighting._suppressing_scene(), "Away")
@@ -164,16 +164,16 @@ class SceneTestCase(unittest.TestCase):
     def test_activate_sleeping_states(self):
         self.zone("Cupboard").set_state(on=True, brightness=255)
         self.zone("Room LED").set_state(on=True)
-        self.plug("Plug 1").set_state(True)
-        self.plug("Plug 2").set_state(True)
+        self.plug("Coffee machine").set_state(True)
+        self.plug("Desk").set_state(True)
         resp = self.activate("Sleeping")
         self.assertEqual(resp.status_code, 200)
 
         # everything dark: every LED zone off, every (unlocked) plug off
         self.assertFalse(self.zone("Cupboard").state()["on"])
         self.assertFalse(self.zone("Room LED").state()["on"])
-        self.assertFalse(self.plug("Plug 1").report()["relay_on"])
-        self.assertFalse(self.plug("Plug 2").report()["relay_on"])
+        self.assertFalse(self.plug("Coffee machine").report()["relay_on"])
+        self.assertFalse(self.plug("Desk").report()["relay_on"])
         self.assertEqual(lighting._suppressing_scene(), "Sleeping")
 
     def test_day_lifts_suppression_and_preserves_zone_mode(self):
@@ -189,7 +189,7 @@ class SceneTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIsNone(lighting._suppressing_scene())
         self.assertEqual(db.get_device(room_led_id)["mode"], "auto")
-        self.assertTrue(self.plug("Plug 1").report()["relay_on"])
+        self.assertTrue(self.plug("Coffee machine").report()["relay_on"])
 
     def test_unknown_scene_404(self):
         self.assertEqual(self.activate("Party").status_code, 404)
@@ -201,15 +201,15 @@ class SceneTestCase(unittest.TestCase):
         self.assertIsNone(lighting._suppressing_scene())
 
     def test_locked_plug_is_skipped(self):
-        plug_id = self.devices["Plug 1"]["id"]
-        self.plug("Plug 1").set_state(True)
+        plug_id = self.devices["Coffee machine"]["id"]
+        self.plug("Coffee machine").set_state(True)
         db.set_device_locked(plug_id, True)
 
         data = self.activate("Away").get_json()
-        plug_result = next(d for d in data["devices"] if d["device"] == "Plug 1")
+        plug_result = next(d for d in data["devices"] if d["device"] == "Coffee machine")
         self.assertFalse(plug_result["ok"])
         self.assertEqual(plug_result["skipped"], "locked")
-        self.assertTrue(self.plug("Plug 1").report()["relay_on"])  # untouched
+        self.assertTrue(self.plug("Coffee machine").report()["relay_on"])  # untouched
         # the rest of the scene still applied
         self.assertFalse(self.zone("Room LED").state()["on"])
 
@@ -323,23 +323,23 @@ class SceneTestCase(unittest.TestCase):
         # the lock is what stops the schedule cutting power to something that
         # must stay on overnight — it has to hold for the automatic Sleeping
         # exactly as it does for a manual one
-        locked_id = self.devices["Plug 2"]["id"]
-        self.plug("Plug 1").set_state(True)
-        self.plug("Plug 2").set_state(True)
+        locked_id = self.devices["Desk"]["id"]
+        self.plug("Coffee machine").set_state(True)
+        self.plug("Desk").set_state(True)
         db.set_device_locked(locked_id, True)
 
         scenes.reschedule_bedtime()
         scenes._fire_bedtime(scenes._bedtime_generation)
 
         self.assertEqual(db.get_active_scene()["name"], "Sleeping")
-        self.assertTrue(self.plug("Plug 2").report()["relay_on"])   # untouched
-        self.assertFalse(self.plug("Plug 1").report()["relay_on"])  # rest applied
+        self.assertTrue(self.plug("Desk").report()["relay_on"])   # untouched
+        self.assertFalse(self.plug("Coffee machine").report()["relay_on"])  # rest applied
         self.assertFalse(self.zone("Cupboard").state()["on"])
 
     def test_locked_plug_refuses_any_toggle(self):
         # 423 in both directions, not just off — the plug must be unlocked
         # first, which is the only path that touches the lock
-        plug_id = self.devices["Plug 1"]["id"]
+        plug_id = self.devices["Coffee machine"]["id"]
         db.set_device_locked(plug_id, True)
         for body in ({"on": False}, {"on": True}, {}):
             resp = self.client.post(f"/api/devices/{plug_id}/toggle", json=body)

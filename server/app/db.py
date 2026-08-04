@@ -104,8 +104,8 @@ def connect() -> sqlite3.Connection:
 # Every device lives in the one room this hub covers, so `room` is seeded
 # empty and the dashboard shows the device name alone.
 PLUG_SEEDS = [
-    ("Plug 1", config.MYSTROM_PLUG_IP, ""),
-    ("Plug 2", config.MYSTROM_PLUG2_IP, ""),
+    ("Coffee machine", config.MYSTROM_PLUG_IP, ""),   # .51, physically installed
+    ("Desk", config.MYSTROM_PLUG2_IP, ""),            # .52
 ]
 
 # Same idea for Shelly bulb lighting zones. More zones: add a row here (and
@@ -146,8 +146,9 @@ SCENE_SEEDS = {
 # Earlier seed revisions (night-light Sleeping, then per-name device lists).
 # init_db swaps a stored row that still exactly matches any of these for the
 # current SCENE_SEEDS entry — a hand-edited row is left alone. These keep the
-# pre-rename "Table" name on purpose: they're matched against what an older DB
-# actually stored, not against the current seeds.
+# pre-rename "Table" and "Plug 1"/"Plug 2" names on purpose: they're matched
+# against what an older DB actually stored, not against the current seeds.
+# (Current seeds key off all_plugs/all_zones, so no live scene names a plug.)
 _LEGACY_SCENE_STATES = {
     "Sleeping": [
         {"Plug 1": {"on": False},
@@ -185,6 +186,12 @@ def init_db() -> None:
         # the second bulb zone is a room LED, not a table lamp; rename before
         # the seed loop below so it matches by name instead of inserting a twin
         conn.execute("UPDATE devices SET name = 'Room LED' WHERE name = 'Table'")
+        # The plugs are named for what they run now that they're installed:
+        # .51 is the coffee machine, .52 the desk. Same reason as the rename
+        # above — do it before the seed loop, or the loop finds no "Coffee
+        # machine" row and inserts a second plug on the same IP.
+        conn.execute("UPDATE devices SET name = 'Coffee machine' WHERE name = 'Plug 1'")
+        conn.execute("UPDATE devices SET name = 'Desk' WHERE name = 'Plug 2'")
         # single-room hub: the seeded room labels carried no information. Only
         # rows still on a seeded value are cleared, so a hand-set room survives.
         conn.execute(

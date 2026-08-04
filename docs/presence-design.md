@@ -256,7 +256,7 @@ summary is generated at all.
   "lux":    { "max": 410, "peaked_at": 1785793010.0 },
   "temp":   { "min": 21.1, "max": 24.8, "avg": 22.4 },
   "hum":    { "min": 39.0, "max": 52.3, "avg": 44.1 },
-  "plugs":  [ { "name": "Plug 1", "max_watts": 61.2, "changed_state": true } ]
+  "plugs":  [ { "name": "Coffee machine", "max_watts": 61.2, "changed_state": true } ]
 }
 ```
 
