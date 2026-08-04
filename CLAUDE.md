@@ -545,20 +545,25 @@ keep this list in sync when endpoints change:
   render red, and a night can be **deleted** from that dialog — a stray Sleeping toggle
   records a junk few-minute "night" that would otherwise drag the mean those flags are
   measured against.
-- **Calendar sizing is user-owned and persisted, and is two separate knobs** — the
-  toolbar carries a **size** stepper and a **scale** stepper, plus one reset for both.
-  They are different questions and were wrong when conflated:
+- **Calendar sizing: one user-owned knob, one fixed constant.** These are two
+  different questions and were wrong when conflated, so keep them distinct even
+  though only one is adjustable now:
   - **`--cal-size`** is the *physical size of the calendar window on the page*: the
     grid box's visible height (`720px ×`), the month row height (`86px ×`), and the
     page width the planner claims. A plain multiplier (0.7–1.6, 0.1 steps) set by
-    `app.js`; every dimension is derived from it in CSS. Above 1.0 `#view-planner`
-    breaks out of `main`'s 1180 px column, staying centred and capped at
-    `100vw - 40px` so it can never overflow the screen; at exactly 1.0 it resolves to
-    `main`'s content box, so the default layout is untouched.
-  - **`--cal-hour-px`** is the *scale inside* that window — the single definition of
-    an hour's height, which `app.js` reads back rather than keeping its own copy
-    (it used to be `44` in JS *and* three places in CSS behind a "keep in sync"
-    comment, which is not a mechanism). Default 56 px, range 28–160.
+    `app.js` from a **size** stepper in the toolbar, with a reset; persisted in
+    localStorage. Every dimension is derived from it in CSS. Above 1.0
+    `#view-planner` breaks out of `main`'s 1180 px column, staying centred and
+    capped at `100vw - 40px` so it can never overflow the screen; at exactly 1.0 it
+    resolves to `main`'s content box, so the default layout is untouched.
+  - **`--cal-hour-px`** is the *scale inside* that window — an hour's height,
+    **fixed at 28 px** and declared on `:root` in `styles.css`. It had a **scale**
+    stepper (default 56, range 28–160); the user settled on 28 — which that stepper
+    displayed as "50%" — and asked for the control to be removed. It is still the
+    single definition both files share: CSS declares it and `app.js` reads the
+    computed value back via `calHourPx()` rather than hardcoding 28 again. Don't
+    "simplify" that into a JS constant — the height used to be `44` in JS *and*
+    three places in CSS behind a "keep in sync" comment, which is not a mechanism.
   Window height is **never read back out of the layout.** It used to be: a CSS
   `resize: vertical` grip on `.cal-scroll` was captured with a `ResizeObserver` and
   persisted, but `box-sizing` is border-box and `.cal-scroll` has a 1px top border, so

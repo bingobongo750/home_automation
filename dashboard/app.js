@@ -2103,17 +2103,19 @@ viewButtons.forEach((btn) => btn.addEventListener("click", () => showView(btn.da
    as continuation chips across month cells; timed multi-day events clip into
    each day column. Tasks add/edit through a small inline row behind the +. */
 
-/* Two independent, persisted calendar knobs. They were tangled together
-   before, which is what made "resize" mean the wrong thing:
+/* ONE persisted calendar knob, --cal-size: the physical size of the calendar
+   WINDOW on the page (the visible height of the grid box, the month row
+   height, and the page width the planner claims). Set here, every dimension
+   derived from it in styles.css.
 
-     --cal-size     the physical size of the calendar WINDOW on the page: the
-                    visible height of the grid box, the month row height, and
-                    the page width the planner claims. Set here, every
-                    dimension derived from it in styles.css.
-     --cal-hour-px  the height of one hour INSIDE that window (the scale). The
-                    hour height used to be 44 here AND in three places in
-                    styles.css behind a "keep in sync" comment; it is now one
-                    custom property both sides read.
+   There was a second stepper for --cal-hour-px, the height of one hour INSIDE
+   that window. It is now FIXED at 28px in styles.css (:root) — the user
+   settled on that value, which the stepper displayed as "50%", and asked for
+   the control to go. The property stays the single definition both files
+   share: styles.css declares it, calHourPx() below reads the computed value
+   back rather than hardcoding 28 a second time. That is the whole point of
+   the arrangement — the hour height used to be duplicated in JS and in three
+   CSS rules behind a "keep in sync" comment, which is not a mechanism.
 
    The window height used to come from a CSS `resize: vertical` grip on
    .cal-scroll, captured with a ResizeObserver — and that fed back on itself.
@@ -2123,33 +2125,23 @@ viewButtons.forEach((btn) => btn.addEventListener("click", () => showView(btn.da
    shorter again: the calendar walked itself smaller a pixel at a time, every
    render, and localStorage kept the result across reloads. An explicit stepper
    has no such loop — nothing reads a size back out of the layout. */
-const CAL_ZOOM_KEY = "hub-cal-hour-px";
 const CAL_SIZE_KEY = "hub-cal-size";
-const CAL_HOUR_MIN = 28;      // below this, event labels stop fitting
-const CAL_HOUR_MAX = 160;
-const CAL_HOUR_DEFAULT = 56;  // was 44 — a roomier default, as asked
 const CAL_SIZE_MIN = 0.7;
 const CAL_SIZE_MAX = 1.6;
 const CAL_SIZE_STEP = 0.1;
+const CAL_HOUR_FALLBACK = 28;  // only if the CSS custom property is missing
 
-// The old key holds a height the shrink loop had already eaten into. Drop it
-// rather than migrate it — the value is the bug.
+// Keys from controls that no longer exist. Dropped rather than migrated: the
+// viewport-px value was eaten by the shrink loop described above, and the
+// hour-px value is now fixed in CSS, so a stored one would be ignored anyway
+// and only confuse anyone reading localStorage later.
 localStorage.removeItem("hub-cal-viewport-px");
+localStorage.removeItem("hub-cal-hour-px");
 
 function calHourPx() {
   const v = parseFloat(getComputedStyle(document.documentElement)
     .getPropertyValue("--cal-hour-px"));
-  return Number.isFinite(v) && v > 0 ? v : CAL_HOUR_DEFAULT;
-}
-
-function setCalHourPx(px, { redraw = true, persist = true } = {}) {
-  const clamped = Math.round(Math.min(Math.max(px, CAL_HOUR_MIN), CAL_HOUR_MAX));
-  document.documentElement.style.setProperty("--cal-hour-px", clamped);
-  if (persist) localStorage.setItem(CAL_ZOOM_KEY, String(clamped));
-  const label = document.getElementById("cal-zoom-label");
-  if (label) label.textContent = `${Math.round((clamped / CAL_HOUR_DEFAULT) * 100)}%`;
-  // Event blocks are positioned in px, so they have to be laid out again.
-  if (redraw && typeof renderCalendar === "function") renderCalendar();
+  return Number.isFinite(v) && v > 0 ? v : CAL_HOUR_FALLBACK;
 }
 
 function calSize() {
@@ -2169,17 +2161,14 @@ function setCalSize(size, { persist = true } = {}) {
   if (label) label.textContent = `${Math.round(clamped * 100)}%`;
 }
 
-/* On a phone both knobs are forced to their defaults and the steppers that
-   drive them are hidden (there is one sane calendar size on a 390px screen,
-   and it is "the screen"). Nothing is persisted in that state: the same
-   localStorage is shared with the desktop layout when a window is merely
-   dragged narrow, and a visit at phone width must not overwrite the size
-   chosen there. */
+/* On a phone the size is forced to 1 and its stepper is hidden (there is one
+   sane calendar size on a 390px screen, and it is "the screen"). Nothing is
+   persisted in that state: the same localStorage is shared with the desktop
+   layout when a window is merely dragged narrow, and a visit at phone width
+   must not overwrite the size chosen there. The hour scale needs no handling
+   either way — it is a constant in styles.css now. */
 function restoreCalendarSizing() {
   const phone = isPhone();
-  const savedHour = parseFloat(localStorage.getItem(CAL_ZOOM_KEY));
-  setCalHourPx(!phone && Number.isFinite(savedHour) ? savedHour : CAL_HOUR_DEFAULT,
-    { redraw: false, persist: !phone });
   const savedSize = parseFloat(localStorage.getItem(CAL_SIZE_KEY));
   setCalSize(!phone && Number.isFinite(savedSize) ? savedSize : 1, { persist: !phone });
 }
@@ -2196,16 +2185,10 @@ PHONE_QUERY.addEventListener("change", () => {
 
 /* Wired at load (this script runs at the end of body). */
 function wireCalendarSizing() {
-  const zoom = (factor) => setCalHourPx(calHourPx() * factor);
-  document.getElementById("cal-zoom-in").addEventListener("click", () => zoom(1.25));
-  document.getElementById("cal-zoom-out").addEventListener("click", () => zoom(0.8));
   const resize = (delta) => setCalSize(calSize() + delta);
   document.getElementById("cal-size-in").addEventListener("click", () => resize(CAL_SIZE_STEP));
   document.getElementById("cal-size-out").addEventListener("click", () => resize(-CAL_SIZE_STEP));
-  document.getElementById("cal-zoom-reset").addEventListener("click", () => {
-    setCalSize(1);
-    setCalHourPx(CAL_HOUR_DEFAULT);
-  });
+  document.getElementById("cal-size-reset").addEventListener("click", () => setCalSize(1));
 }
 wireCalendarSizing();
 const CAL_SNAP_MIN = 15;  // drag-to-create snaps to quarter hours

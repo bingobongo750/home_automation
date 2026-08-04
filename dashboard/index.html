@@ -344,23 +344,18 @@
             <button class="nav-btn" id="cal-next" aria-label="Next">›</button>
           </div>
           <h3 class="cal-title" id="cal-title"></h3>
-          <!-- Two independent, persisted controls. SIZE is the physical size of
-               the calendar window on the page (how tall the grid box is, and
-               how much page width the planner claims); SCALE is the height of
-               one hour inside that window. -->
+          <!-- SIZE is the physical size of the calendar window on the page: how
+               tall the grid box is, and how much page width the planner claims.
+               There was a second stepper here for SCALE (the height of one hour
+               inside that window); the hour height is now fixed at 28px in
+               styles.css (:root --cal-hour-px) and is no longer adjustable. -->
           <div class="cal-zoom" role="group" aria-label="Calendar window size">
             <span class="cal-zoom-cap">size</span>
             <button class="nav-btn" id="cal-size-out" title="Smaller window" aria-label="Smaller window">−</button>
             <span class="cal-zoom-label" id="cal-size-label">100%</span>
             <button class="nav-btn" id="cal-size-in" title="Bigger window" aria-label="Bigger window">+</button>
           </div>
-          <div class="cal-zoom" role="group" aria-label="Hour scale">
-            <span class="cal-zoom-cap">scale</span>
-            <button class="nav-btn" id="cal-zoom-out" title="Shorter hours" aria-label="Shorter hours">−</button>
-            <span class="cal-zoom-label" id="cal-zoom-label">100%</span>
-            <button class="nav-btn" id="cal-zoom-in" title="Taller hours" aria-label="Taller hours">+</button>
-          </div>
-          <button class="nav-btn cal-zoom-reset" id="cal-zoom-reset" title="Reset size and scale">reset</button>
+          <button class="nav-btn cal-zoom-reset" id="cal-size-reset" title="Reset size">reset</button>
           <button class="add-btn" id="event-add-btn" title="Add event" aria-label="Add event">+</button>
         </div>
         <div class="calendar" id="calendar"></div>

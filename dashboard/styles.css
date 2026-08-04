@@ -1115,17 +1115,25 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 .cal-allday-bar { margin: 0 2px; }
 
-/* Two separate knobs, both set on :root by app.js from localStorage, both a
-   single definition that everything else derives from:
+/* Two custom properties, each the single definition everything else derives
+   from — but only ONE of them is still user-facing:
 
-   --cal-hour-px  the height of one hour INSIDE the grid (the scale). app.js
-                  reads it back rather than carrying its own copy, because the
-                  previous arrangement duplicated 44 in three places behind a
-                  "keep in sync" comment, which is not a mechanism.
+   --cal-hour-px  the height of one hour INSIDE the grid (the scale). FIXED
+                  here at 28px, and no longer adjustable: the toolbar used to
+                  carry a scale stepper, the user settled on 28 (which the
+                  stepper showed as "50%") and asked for the control to go.
+                  Declared on :root rather than left to the var() fallbacks
+                  below, because app.js reads the computed value back rather
+                  than carrying its own copy — an undeclared property would
+                  make the JS fall back to its own number, which is exactly
+                  the duplicate-and-drift this arrangement exists to avoid.
    --cal-size     the physical size of the calendar WINDOW on the page — the
                   visible height of the grid box (below) and the page width the
                   planner claims (see #view-planner). A plain multiplier, so
-                  every dimension it drives stays in proportion. */
+                  every dimension it drives stays in proportion. Still a
+                  stepper, still persisted by app.js. */
+:root { --cal-hour-px: 28; }
+
 .cal-scroll {
   position: relative;
   max-height: calc(720px * var(--cal-size, 1));
@@ -1133,7 +1141,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   border-top: 1px solid var(--hairline);
 }
 
-.cal-hours { position: relative; height: calc(var(--cal-hour-px, 56) * 24px); }
+.cal-hours { position: relative; height: calc(var(--cal-hour-px, 28) * 24px); }
 .cal-hour-label {
   position: absolute;
   right: 6px;
@@ -1145,12 +1153,12 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .cal-col {
   position: relative;
-  height: calc(var(--cal-hour-px, 56) * 24px);
+  height: calc(var(--cal-hour-px, 28) * 24px);
   border-left: 1px solid var(--hairline);
   background: repeating-linear-gradient(
     to bottom,
     var(--grid), var(--grid) 1px, transparent 1px,
-    transparent calc(var(--cal-hour-px, 56) * 1px));
+    transparent calc(var(--cal-hour-px, 28) * 1px));
   cursor: crosshair;
   user-select: none;
   -webkit-user-select: none;
@@ -1967,7 +1975,8 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   cursor: default;
 }
 
-/* Calendar size + scale controls */
+/* Calendar size stepper. The .cal-zoom* names predate the removal of the
+   companion hour-scale stepper; they are the shared stepper styling now. */
 .cal-zoom {
   display: inline-flex;
   align-items: center;
