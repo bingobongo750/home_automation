@@ -915,6 +915,10 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .light-color:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .light-status:empty { display: none; }
+/* Auto mode is saturated — it wants to reach the target and physically can't
+   (room already brighter, or bulb at its ceiling). Copper, not the critical
+   red: this is a normal outcome of a dim setpoint on a sunny day, not a fault. */
+.light-status.light-status-capped { color: var(--copper); }
 
 /* ---------------------------------------------------------------- motion */
 

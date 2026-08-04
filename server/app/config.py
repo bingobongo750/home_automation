@@ -37,12 +37,43 @@ MYSTROM_POLL_INTERVAL = float(os.environ.get("MYSTROM_POLL_INTERVAL", "10"))
 SHELLY_CUPBOARD_IP = os.environ.get("SHELLY_CUPBOARD_IP", "192.168.0.61")
 SHELLY_ROOM_LED_IP = os.environ.get("SHELLY_ROOM_LED_IP", "192.168.0.62")
 
-# Auto-lighting job: how often it re-checks lux and pushes brightness, the
-# lux level below which a zone in 'auto' mode is considered "dark", and the
-# brightness (0-255) it sets when dark (0 = off when it's bright enough).
+# Auto-lighting: a closed loop that holds MEASURED room illuminance at a
+# setpoint (see app/lighting_control.py for the control law and why it is
+# integral-only). The setpoint itself is user-owned in `settings` — the env var
+# here only seeds a fresh install.
+#
+#   POLL_INTERVAL     how often the loop looks at lux and pushes brightness
+#   TARGET_LUX        seeds the user-owned setpoint. 5 lx is a dim ambient
+#                     glow, not reading light
+#   AUTO_BRIGHTNESS   brightness ceiling (0-255) the loop may command
+#   DEADBAND_LUX      half-width of the accepted band. Lux arrives as integers,
+#                     so at a 5 lx target ±1 lx is already ±20 % — below about
+#                     1.0 the loop hunts on quantisation alone
+#   GAIN              brightness units per lx of error, before the slew limit.
+#                     TUNING: hunting around the target means gain is too high;
+#                     taking many minutes to settle means it is too low
+#   MAX_STEP          slew limit: largest brightness change in one tick. This
+#                     is what keeps a slightly-too-high gain to a slow approach
+#                     instead of a visible oscillation
+#   SETTLE_S          a lux sample must be at least this much newer than our
+#                     last brightness CHANGE before the loop acts on it. The
+#                     Arduino reports every 5 s, so anything under that would
+#                     have the loop correcting on a reading that predates its
+#                     own last move — and double-counting it
 LIGHTING_POLL_INTERVAL = float(os.environ.get("LIGHTING_POLL_INTERVAL", "30"))
-LIGHTING_LUX_THRESHOLD = float(os.environ.get("LIGHTING_LUX_THRESHOLD", "50"))
+LIGHTING_TARGET_LUX = float(os.environ.get("LIGHTING_TARGET_LUX", "5"))
 LIGHTING_AUTO_BRIGHTNESS = int(os.environ.get("LIGHTING_AUTO_BRIGHTNESS", "180"))
+LIGHTING_DEADBAND_LUX = float(os.environ.get("LIGHTING_DEADBAND_LUX", "1.0"))
+LIGHTING_GAIN = float(os.environ.get("LIGHTING_GAIN", "6.0"))
+LIGHTING_MAX_STEP = int(os.environ.get("LIGHTING_MAX_STEP", "16"))
+LIGHTING_SETTLE_S = float(os.environ.get("LIGHTING_SETTLE_S", "8"))
+#   STALE_AFTER_S     lux this old means the sensor or the serial link is gone,
+#                     which the dashboard should say. Distinct from SETTLE_S:
+#                     that one is "no NEW sample since my last move", a routine
+#                     between-samples condition that must NOT be reported as a
+#                     fault — the loop simply holds and the card keeps showing
+#                     the last real verdict
+LIGHTING_STALE_AFTER_S = float(os.environ.get("LIGHTING_STALE_AFTER_S", "120"))
 
 # Presence (see docs/presence-design.md). A phone posts departure/arrival; the
 # host decides the scene.

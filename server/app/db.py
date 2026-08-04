@@ -300,15 +300,23 @@ def set_thresholds(thresholds: dict) -> None:
 def get_lighting() -> dict:
     """Auto-lighting settings, user-owned via the dashboard's settings dialog.
 
-    `lux_off` is the ambient level at which a zone in 'auto' mode is fully
-    off; app/lighting.py ramps brightness linearly from LIGHTING_AUTO_BRIGHTNESS
-    at pitch dark down to nothing there. LIGHTING_LUX_THRESHOLD seeds it, so an
-    untouched install behaves as the env var says."""
+    `target_lux` is the room illuminance a zone in 'auto' mode aims to hold —
+    app/lighting.py closes a loop on the BH1750 reading to reach it (see
+    app/lighting_control.py). LIGHTING_TARGET_LUX seeds it, so an untouched
+    install behaves as the env var says.
+
+    It replaces the old `lux_off`, which was the level at which the previous
+    open-loop ramp faded to nothing. There is no meaningful conversion between
+    them — one was the top of a fade, this is a setpoint — so a stored
+    `lux_off` is ignored rather than migrated, and the install falls back to the
+    env default. Under a setpoint controller `lux_off` is also redundant: a
+    zone switches itself off whenever ambient alone already exceeds the target.
+    """
     saved = get_setting("lighting") or {}
-    value = saved.get("lux_off")
+    value = saved.get("target_lux")
     if value is None:
-        value = config.LIGHTING_LUX_THRESHOLD
-    return {"lux_off": float(value)}
+        value = config.LIGHTING_TARGET_LUX
+    return {"target_lux": float(value)}
 
 
 def set_lighting(settings: dict) -> None:

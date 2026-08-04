@@ -573,11 +573,13 @@
       </div>
 
       <h4 class="settings-section">Auto lighting</h4>
-      <p class="settings-hint">A zone in auto mode fades as the room brightens: full
-         brightness in the dark, fully off at this level.</p>
+      <p class="settings-hint">A zone in auto mode holds the room at this measured
+         brightness, dimming as daylight takes over and switching off once the room
+         is already brighter on its own. 5 lx is a dim ambient glow; 0 turns auto
+         lighting off.</p>
       <div class="threshold-row">
-        <span class="th-label">Lights off at <span class="th-unit">lx</span></span>
-        <label><input type="number" min="0" step="any" id="lux-off-input"></label>
+        <span class="th-label">Hold room at <span class="th-unit">lx</span></span>
+        <label><input type="number" min="0" step="any" id="target-lux-input"></label>
       </div>
 
       <h4 class="settings-section">Nightly sleep</h4>

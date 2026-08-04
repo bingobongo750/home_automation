@@ -127,16 +127,64 @@ data before it hits the database or API layer.
   power.
 - `app/shelly_bulb.py` is the client (get state; push a partial on/brightness/color
   update) — mirrors `app/mystrom.py`'s shape, including a mock for `MOCK_HARDWARE=1`.
-- `app/lighting.py` is a **separate** background thread (not the plug poller, not the
-  serial reader) that, on its own interval (`LIGHTING_POLL_INTERVAL`), pushes a
-  brightness update to every zone currently in `auto` mode based on the latest BH1750
-  `lux` reading already in the DB. It is a **linear ramp, not a threshold**: full
-  `LIGHTING_AUTO_BRIGHTNESS` in a pitch-dark room, fading to off exactly at the
-  `lux_off` setting. `lux_off` is **user-owned** — stored in `settings`, edited from the
-  dashboard's settings dialog via `GET/PUT /api/settings/lighting`, and seeded from the
-  `LIGHTING_LUX_THRESHOLD` env var so an untouched install behaves as the env says.
-  Zones in `manual` mode are left alone — the dashboard drives those directly via
-  `POST /api/devices/:id/state`.
+- **Auto lighting is a closed loop on a setpoint, not a curve.** `app/lighting.py` is a
+  **separate** background thread (not the plug poller, not the serial reader) that, on
+  its own interval (`LIGHTING_POLL_INTERVAL`), drives the *measured* BH1750 level to
+  `target_lux` — **user-owned**, stored in `settings`, edited from the dashboard's
+  settings dialog via `GET/PUT /api/settings/lighting`, seeded from
+  `LIGHTING_TARGET_LUX` (default **5 lx**). Zones in `manual` mode are left alone; the
+  dashboard drives those via `POST /api/devices/:id/state`.
+  - It **replaced an open-loop linear ramp** (full brightness at pitch dark fading to
+    off at a `lux_off` cutoff). A ramp cannot hold a level because it never aims at
+    one, and the mapping is circular: the BH1750 measures TOTAL illuminance, including
+    the light our own bulbs emit, so "the room got brighter" and "our bulbs are
+    working" are the same signal. A stored `lux_off` is **ignored, not converted** —
+    one was the top of a fade, the other is a target. `lux_off` is also redundant now:
+    a zone switches itself off whenever ambient alone already exceeds the target.
+  - The control law is **pure and lives in `app/lighting_control.py`** (no DB/Flask/
+    clock, so it unit-tests against a simulated room). It is **integral-only**:
+    the brightness→lux gain is unknown and unmeasured (bulb, room reflectance, sensor
+    placement), and integral control converges to zero steady-state error without
+    knowing it. No derivative — lux arrives as **integers** from the firmware, so at a
+    5 lx setpoint ±1 lx is already ±20 %, and differentiating that is pure noise. Gain
+    is **hand-tuned via `LIGHTING_GAIN`, never auto-fitted**: ambient drifts on its own,
+    so any observed Δlux mixes "our bulb did that" with "the room changed", and a gain
+    estimator fed that chases its tail. Same stance as the `HEALTH_*` weights.
+  - Three things keep it stable, and **the third is not optional** — it was found by
+    the convergence tests, not by reasoning: a **deadband**
+    (`LIGHTING_DEADBAND_LUX`, below ~1.0 it hunts on quantisation alone), a **slew
+    limit** (`LIGHTING_MAX_STEP`), and **overshoot-reactive step scaling**. A single
+    fixed gain cannot serve a plant gain spanning decades: with a strong lamp near the
+    sensor the old fixed cap was coarser than the whole deadband and produced a perfect
+    limit cycle (0 → 16 units → 16 lx → 0 → 0 lx → forever). So every time the error
+    changes sign the slew cap halves; while the sign holds it relaxes back (×1.25).
+    That state (`step_scale`, `sign`) is carried between ticks — dropping it
+    reintroduces the oscillation, which is why `correct()` takes and returns it.
+  - **Never correct twice on the same measurement.** After a brightness *change* the
+    next reading must be `LIGHTING_SETTLE_S` newer (the Arduino only reports every 5 s)
+    and must be a sample not already acted on. Without this the loop integrates one
+    error repeatedly and overshoots every time. The settle clock restarts on a
+    **change**, not on every push — the loop re-asserts its current value each tick so
+    a zone knocked out of sync by a manual tap comes back, and counting those as
+    changes would keep the guard permanently armed and the loop permanently blind.
+    "No new sample yet" is routine and must **not** surface as a fault; only a reading
+    older than `LIGHTING_STALE_AFTER_S` reports `stale`, and between samples the card
+    keeps showing the last real verdict.
+  - **One controller for all zones, not one per zone.** One BH1750, one room. Two
+    independent controllers on the same sensor each see the other's light, each
+    conclude they are short of target, and both keep pushing — the combined output
+    overshoots roughly two-fold, then they fight on the way back down. If this hub ever
+    covers more than one room, a controller per sensor is the first thing to change.
+  - **Saturation is a reported state, not a failure.** "The room is already brighter
+    than the target" is the normal daytime outcome. `lighting.status` (`state`,
+    `detail`, `target_lux`, `measured_lux`, `brightness`) rides on every `auto` bulb row
+    in `GET /api/devices`, and the card prints it in copper — otherwise auto mode
+    looks broken when it is working correctly. States: `holding`, `converging`,
+    `too_bright`, `at_max`, `off`, `no_reading`, `stale`.
+  - **MOCK_HARDWARE cannot show convergence**: the fake lux generator is independent of
+    the fake bulbs (coupling them would wire the wired lane to the wireless one), so
+    auto mode there only ever reaches `too_bright`/`at_max`. Convergence lives in
+    `tests/test_lighting_control.py`, which simulates the room instead.
 - **Ambient lighting is CCT, not RGB.** The bulb has a dedicated white channel and
   separate R/G/B dies, and lights only one at a time (`mode`). The ambient/warmth
   control sends `ct` in kelvin and the bulb runs its white channel; `rgb` is reserved
@@ -426,7 +474,7 @@ keep this list in sync when endpoints change:
   `color` drives the RGB dies. The two are mutually exclusive; responses carry `color_mode`
 - `POST /api/devices/:id/mode` — set a bulb zone's mode: `manual` or `auto`
 - `GET/PUT /api/settings/thresholds` — alert thresholds (min/max per metric + plug power draw); a reading outside its band flags that widget on the dashboard
-- `GET/PUT /api/settings/lighting` — auto-lighting `lux_off`: the ambient level at which an `auto` zone is fully off (brightness ramps linearly from full at pitch dark down to nothing there)
+- `GET/PUT /api/settings/lighting` — auto-lighting `target_lux`: the measured room level an `auto` zone holds (closed loop; 0 disables auto lighting). Saturation is reported per-zone, not hidden
 - `GET/PUT /api/settings/sleep-schedule` — nightly Sleeping window (`enabled`, `sleep_time`, `wake_time` as local "HH:MM"); PUT re-arms it immediately
 - `GET /api/scenes` — house modes and their per-device target states
 - `POST /api/scenes/:name/activate` — activate a scene; body may carry `wake_time` ("HH:MM") when activating Sleeping
@@ -512,7 +560,7 @@ keep this list in sync when endpoints change:
   Never make widget interaction shift the board layout.
 - A settings dialog (gear icon) with three sections: **Alert thresholds** (min/max band
   per metric and plug power draw — a reading outside its band flags that widget on the
-  board), **Auto lighting** (the `lux_off` level), and **Nightly sleep** (the recurring
+  board), **Auto lighting** (the `target_lux` setpoint), and **Nightly sleep** (the recurring
   Sleeping window). Each section posts to its own endpoint on save.
 - Chart y-axes never run negative except temperature — humidity, lux, CO2 and watts
   have no negative values, so `METRICS.allowNegative` gates the axis padding and

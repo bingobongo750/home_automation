@@ -766,11 +766,23 @@ function renderLighting(devices, latest) {
       warmth.disabled = false;
       colorModeBtns.forEach((b) => { b.disabled = false; });
       const suppressedBy = activeScene && activeScene.name !== "Home" ? activeScene.name : null;
+      /* In auto mode the backend's controller already knows whether it is
+         holding the target, still converging, or saturated — "the room is
+         already brighter than the target" is a normal outcome and the card has
+         to say so, otherwise auto mode just looks broken. device.auto.detail
+         is that sentence; fall back to the raw lux if an older backend or a
+         tick that hasn't run yet leaves it absent. */
       status.textContent = !isAuto
         ? ""
         : suppressedBy
           ? `Auto paused — ${suppressedBy} scene active.`
-          : `Auto — following ambient light${lux ? ` (${Number(lux.value).toFixed(0)} lx)` : ""}.`;
+          : device.auto && device.auto.detail
+            ? `Auto — ${device.auto.detail}`
+            : `Auto — following ambient light${lux ? ` (${Number(lux.value).toFixed(0)} lx)` : ""}.`;
+      status.classList.toggle(
+        "light-status-capped",
+        Boolean(isAuto && !suppressedBy && device.auto
+                && (device.auto.state === "too_bright" || device.auto.state === "at_max")));
     } else {
       color.disabled = true;
       warmth.disabled = true;
@@ -862,7 +874,7 @@ document.addEventListener("keydown", (ev) => {
 const settingsOverlay = document.getElementById("settings-overlay");
 const settingsForm = document.getElementById("settings-form");
 const saveNote = document.getElementById("save-note");
-const luxOffInput = document.getElementById("lux-off-input");
+const targetLuxInput = document.getElementById("target-lux-input");
 const sleepEnabledInput = document.getElementById("sleep-enabled-input");
 const sleepFromInput = document.getElementById("sleep-from-input");
 const sleepToInput = document.getElementById("sleep-to-input");
@@ -891,7 +903,7 @@ async function openSettings() {
       getJSON("/api/settings/lighting"),
       getJSON("/api/settings/sleep-schedule"),
     ]);
-    luxOffInput.value = lighting.lux_off;
+    targetLuxInput.value = lighting.target_lux;
     sleepEnabledInput.checked = !!schedule.enabled;
     sleepFromInput.value = schedule.sleep_time;
     sleepToInput.value = schedule.wake_time;
@@ -928,7 +940,7 @@ settingsForm.addEventListener("submit", async (ev) => {
     // the sections apply in the order they're shown.
     thresholds = await putJSON("/api/settings/thresholds", thresholdBody);
     await putJSON("/api/settings/lighting",
-      { lux_off: luxOffInput.value.trim() === "" ? null : Number(luxOffInput.value) });
+      { target_lux: targetLuxInput.value.trim() === "" ? null : Number(targetLuxInput.value) });
     await putJSON("/api/settings/sleep-schedule", {
       enabled: sleepEnabledInput.checked,
       sleep_time: sleepFromInput.value,

@@ -1,28 +1,49 @@
-"""Auto-lighting job: on its own interval, pushes a brightness update to every
-bulb_zone device currently in 'auto' mode, based on the latest BH1750 lux
-reading already sitting in the sensor DB. Deliberately its own thread — same
-reasoning as poller.py: this event source is unrelated to the serial reader
-and the plug poller, and must not block on (or be blocked by) either.
+"""Auto-lighting job: a closed loop that holds the room's MEASURED illuminance
+at the user's target (default 5 lx) by adjusting every bulb_zone currently in
+'auto' mode. Deliberately its own thread — same reasoning as poller.py: this
+event source is unrelated to the serial reader and the plug poller, and must
+not block on (or be blocked by) either.
 
-Brightness follows lux on a linear ramp: full LIGHTING_AUTO_BRIGHTNESS in a
-pitch-dark room, fading to off exactly at the `lux_off` setting the dashboard
-owns (LIGHTING_LUX_THRESHOLD seeds it). See _desired_state.
+The control law, and the reasoning for it, lives in app/lighting_control.py
+(pure, no IO). This file owns the three things that need the real world:
+
+1. ONE CONTROLLER FOR ALL ZONES, not one per zone. There is a single BH1750 and
+   a single room. Two independent controllers reading the same sensor would
+   each see the other's light, each conclude it was still short of target, and
+   both keep pushing — the combined output overshoots roughly two-fold and
+   then they fight on the way back down. So the loop computes ONE brightness
+   and commands it to every auto zone. If this hub ever covers more than one
+   room, this is the thing that has to change first: a controller per sensor.
+
+2. NEVER CORRECT TWICE ON THE SAME MEASUREMENT. After changing brightness, the
+   next reading must be new enough to describe the change (LIGHTING_SETTLE_S,
+   against the reading's own timestamp — the Arduino only reports every 5 s).
+   Without this the loop integrates the same error repeatedly and overshoots
+   every time; it is the single cheapest thing that keeps it stable. Note the
+   settle clock restarts on a brightness CHANGE, not on every push: the loop
+   re-asserts its current value each tick (so a zone knocked out of sync by a
+   manual tap comes back), and treating those as changes would keep the guard
+   permanently armed and the loop permanently blind.
+
+3. Reporting saturation. "The room is already brighter than the target" is a
+   normal outcome, not an error — `status` below is what the dashboard reads to
+   say so out loud instead of appearing to do nothing.
 
 Devices in 'manual' mode are left alone; the dashboard drives those directly
 through /api/devices/:id/state.
 
 House modes: while a scene other than 'Home' is active (see app/scenes.py),
 the whole job is suppressed — the scene's explicit zone states win, and zones
-keep their 'auto' mode column so returning to Home resumes lux control without
-any re-configuration. Scene activation calls poke() so the loop reacts
-immediately instead of waiting out the current sleep interval.
+keep their 'auto' mode column so returning to Home resumes control without any
+re-configuration. Scene activation calls poke() so the loop reacts immediately
+instead of waiting out the current sleep interval.
 """
 
 import logging
 import threading
 import time
 
-from . import config, db
+from . import config, db, lighting_control
 from .shelly_bulb import BulbError, make_bulb
 
 log = logging.getLogger("lighting")
@@ -56,29 +77,54 @@ def _suppressing_scene() -> str | None:
     return None
 
 
-def _desired_state(lux: float | None, lux_off: float) -> tuple[bool, int]:
-    """-> (on, brightness) for the given lux reading.
+# Live controller state, for GET /api/devices (bulb rows) and the dashboard
+# card. Rebuilt every tick; read without a lock because it is replaced
+# wholesale, never mutated in place, so a reader always sees one consistent
+# snapshot rather than a half-updated dict.
+status: dict = {
+    "state": lighting_control.NO_READING,
+    "detail": "Auto lighting has not run yet.",
+    "target_lux": config.LIGHTING_TARGET_LUX,
+    "measured_lux": None,
+    "brightness": 0,
+}
 
-    A linear ramp, not a cliff: pitch dark (0 lx) gets the full
-    LIGHTING_AUTO_BRIGHTNESS, and the zone fades out as the room brightens,
-    reaching off exactly at `lux_off` (the user-owned setting — see
-    db.get_lighting). A missing lux reading is treated as dark, same as the
-    threshold version did: better a lit room than a dark one on sensor loss.
+# The controller's integrator: the brightness we last commanded. Seeded at
+# startup from what a zone reports, so a restart does not drop the room to dark
+# and spend several ticks climbing back.
+_brightness = 0
+# Wall clock of the last brightness CHANGE, and the reading timestamp already
+# acted on — the two halves of "never correct twice on the same measurement".
+_last_change_at = 0.0
+_last_reading_ts = None
+# Carried controller state. Must survive between ticks: without it the loop
+# limit-cycles on a bright lamp close to the sensor (see point 3 of the
+# app/lighting_control.py docstring — the tests pin the regression).
+_step_scale = 1.0
+_last_sign = 0
 
-    Brightness is rounded, so the last stretch below `lux_off` lands on 0 and
-    the zone switches off rather than sitting at an invisible 1/255 that the
-    Shelly would floor up to 1 %.
-    """
-    if lux_off <= 0:            # cutoff at 0 lx: auto mode never lights up
-        return False, 0
-    fraction = 1.0 if lux is None else 1.0 - lux / lux_off
-    brightness = round(config.LIGHTING_AUTO_BRIGHTNESS * min(1.0, fraction))
-    if brightness <= 0:
-        return False, 0
-    return True, brightness
+
+def _seed_brightness() -> None:
+    """Adopt a live zone's brightness as the integrator's starting point."""
+    global _brightness
+    for zone in zones.values():
+        try:
+            state = zone.state()
+        except BulbError:
+            continue
+        if state and state.get("brightness") is not None:
+            _brightness = int(state["brightness"])
+            log.info("Auto-lighting starting from the zone's current brightness %d/255",
+                     _brightness)
+            return
+    log.info("No zone reachable at startup — auto-lighting starts from 0/255")
 
 
 def _auto_loop() -> None:
+    # Declared here, not in the branch below: `global` is a whole-function
+    # declaration, and without it `status.get(...)` would raise
+    # UnboundLocalError the moment the function also assigns to `status`.
+    global _brightness, _last_change_at, _last_reading_ts, _step_scale, _last_sign, status
     consecutive_failures: dict[int, int] = {}
     suppressed_by: str | None = None
     while True:
@@ -94,11 +140,73 @@ def _auto_loop() -> None:
                             if d["type"] == "bulb_zone" and d.get("mode") == "auto"}
             if auto_devices:
                 latest = db.latest_readings().get("lux")
-                # Read every tick, not once at startup — the dashboard's
-                # settings dialog can change the cutoff while the job runs.
-                lux_off = db.get_lighting()["lux_off"]
-                on, brightness = _desired_state(latest["value"] if latest else None,
-                                                lux_off)
+                measured = latest["value"] if latest else None
+                reading_ts = latest["ts"] if latest else None
+                # Read every tick, not once at startup — the settings dialog
+                # can move the target while the job runs.
+                target_lux = db.get_lighting()["target_lux"]
+
+                # Two DIFFERENT things, and conflating them was a bug:
+                #
+                # `unusable` — this sample cannot be corrected on. Either it
+                #   predates our last brightness change by less than the settle
+                #   time (so it does not show that change yet), or it is the
+                #   same sample we already corrected on (correcting twice
+                #   double-counts the error and overshoots). Entirely routine:
+                #   the Arduino reports every 5 s, so at a faster poll interval
+                #   most ticks land between samples. The loop holds — and the
+                #   dashboard must keep showing the last real verdict, not
+                #   "waiting for a reading", which reads like a fault.
+                #
+                # `sensor_lost` — the newest sample is genuinely old, so the
+                #   BH1750 or the serial link has stopped. THAT is worth saying.
+                sensor_lost = (reading_ts is not None
+                               and time.time() - reading_ts > config.LIGHTING_STALE_AFTER_S)
+                fresh = (reading_ts is not None
+                         and reading_ts >= _last_change_at + config.LIGHTING_SETTLE_S
+                         and (_last_reading_ts is None or reading_ts > _last_reading_ts))
+                unusable = sensor_lost or not fresh
+
+                result = lighting_control.correct(
+                    measured_lux=measured,
+                    target_lux=target_lux,
+                    brightness=_brightness,
+                    max_brightness=config.LIGHTING_AUTO_BRIGHTNESS,
+                    deadband_lux=config.LIGHTING_DEADBAND_LUX,
+                    gain=config.LIGHTING_GAIN,
+                    max_step=config.LIGHTING_MAX_STEP,
+                    step_scale=_step_scale,
+                    last_sign=_last_sign,
+                    reading_stale=unusable,
+                )
+                _step_scale, _last_sign = result.step_scale, result.sign
+
+                # Between samples the room has not changed, so the last verdict
+                # is still the true one — keep reporting it and only refresh the
+                # measured number. A genuinely lost sensor does get reported.
+                if result.state == lighting_control.STALE and not sensor_lost:
+                    shown_state = status.get("state", result.state)
+                    shown_detail = status.get("detail", "")
+                else:
+                    shown_state = result.state
+                    shown_detail = lighting_control.describe(
+                        shown_state, target_lux=target_lux, measured_lux=measured)
+                if shown_state != status.get("state"):
+                    log.info("Auto lighting: %s (brightness %d/255)",
+                             shown_detail, result.brightness)
+                status = {
+                    "state": shown_state,
+                    "detail": shown_detail,
+                    "target_lux": target_lux,
+                    "measured_lux": measured,
+                    "brightness": result.brightness,
+                }
+                if result.brightness != _brightness:
+                    _last_change_at = time.time()
+                _brightness = result.brightness
+                if not unusable and reading_ts is not None:
+                    _last_reading_ts = reading_ts
+                on, brightness = result.on, result.brightness
                 with push_lock:
                     # Re-check under the lock: a scene may have activated
                     # since the top of this tick — its values must win, so
@@ -128,8 +236,11 @@ def start() -> threading.Thread:
     for device in db.list_devices():
         if device["type"] == "bulb_zone":
             zones[device["id"]] = make_bulb(device["ip"])
-    log.info("Auto-lighting job covering %d bulb zone(s), checking every %ss",
-              len(zones), config.LIGHTING_POLL_INTERVAL)
+    _seed_brightness()
+    log.info("Auto-lighting job covering %d bulb zone(s), checking every %ss, "
+             "holding %.0f lx (+/-%.1f, gain %.1f, max step %d/255)",
+             len(zones), config.LIGHTING_POLL_INTERVAL, db.get_lighting()["target_lux"],
+             config.LIGHTING_DEADBAND_LUX, config.LIGHTING_GAIN, config.LIGHTING_MAX_STEP)
     thread = threading.Thread(target=_auto_loop, name="lighting-auto", daemon=True)
     thread.start()
     return thread

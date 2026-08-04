@@ -596,7 +596,8 @@ bulb screwed in, and the whole suite still runs under it.
 
 After the migration, set a zone's mode to `auto` from its lighting card (or
 `POST /api/devices/:id/mode {"mode":"auto"}`) to hand its brightness to the
-lux-driven job. Tune with `LIGHTING_LUX_THRESHOLD` (default 50 lux) and
+lux-driven job. Tune with `LIGHTING_TARGET_LUX` (default 5 lux, the level the room
+is held at) and
 `LIGHTING_AUTO_BRIGHTNESS` (default 180/255 ≈ 70 %).
 
 ### 5.5 Zone names and the empty `room` column (done)
@@ -813,7 +814,7 @@ SHELLY_CUPBOARD_IP=192.168.0.61
 SHELLY_ROOM_LED_IP=192.168.0.62
 
 LIGHTING_POLL_INTERVAL=30
-LIGHTING_LUX_THRESHOLD=50
+LIGHTING_TARGET_LUX=5
 LIGHTING_AUTO_BRIGHTNESS=180
 
 HOST=0.0.0.0
@@ -1282,7 +1283,7 @@ nothing.
 | Plug ignores a scene | It is locked | By design — `UPDATE devices SET locked=0` if you meant otherwise |
 | `BULB ZONE UNREACHABLE` | Expected until the bulbs are installed | The seeded zone IPs are placeholders — provision the bulb (§5.2) and update the DB row |
 | Bulb offline | Its fixture's wall switch is off | The bulb needs permanent mains |
-| Auto-lighting oscillates | BH1750 sees the light it controls | Move the sensor; widen `LIGHTING_LUX_THRESHOLD` |
+| Auto-lighting oscillates | Gain too high for how strongly the lamp lights the sensor | Lower `LIGHTING_GAIN`, or widen `LIGHTING_DEADBAND_LUX`. The loop already halves its step on each overshoot, so persistent hunting means the gain is far too high |
 | Auto-lighting does nothing | A non-Home scene is active, or the zone is `manual` | By design — the card reads "Auto paused"; switch to Day |
 | Wake timer did not fire | Backend was down past the time | It fires immediately at startup instead; check that the service is enabled |
 | Health ingest rejected | Aggregated sleep data | Turn off "aggregate sleep data" in Health Auto Export |
@@ -1307,7 +1308,12 @@ bring-up:
 | `MYSTROM_POLL_INTERVAL` | `10` (s) | Plug state + power sampling |
 | `SHELLY_CUPBOARD_IP` / `SHELLY_ROOM_LED_IP` | `192.168.0.61` / `.62` | Seeds only — see §5.4, §5.5 |
 | `LIGHTING_POLL_INTERVAL` | `30` (s) | Auto-lighting tick |
-| `LIGHTING_LUX_THRESHOLD` | `50` (lux) | Below this counts as dark |
+| `LIGHTING_TARGET_LUX` | `5` (lux) | Room level auto mode holds (seeds the user setting; 0 = off) |
+| `LIGHTING_DEADBAND_LUX` | `1.0` (lux) | Accepted band around the target |
+| `LIGHTING_GAIN` | `6.0` | Brightness units per lux of error |
+| `LIGHTING_MAX_STEP` | `16` (of 255) | Slew limit per tick |
+| `LIGHTING_SETTLE_S` | `8` (s) | A reading must be this much newer than our last change |
+| `LIGHTING_STALE_AFTER_S` | `120` (s) | Older than this = sensor lost, and reported |
 | `LIGHTING_AUTO_BRIGHTNESS` | `180` (0–255) | Applied when dark |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | |
 | `MOCK_HARDWARE` | `0` | `1` simulates serial, plugs, and zones |

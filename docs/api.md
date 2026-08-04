@@ -88,11 +88,24 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
   the API before the Shelly migration were a WLED feature).
 - `POST /devices/:id/mode` → *bulb_zone only.* Body: `{"mode": "manual"|"auto"}`.
   In `auto` mode, a background job (independent of sensor ingestion and
-  plug polling — see `app/lighting.py`) reads the latest BH1750 `lux`
-  reading every `LIGHTING_POLL_INTERVAL` seconds and pushes brightness to
-  the zone: below `LIGHTING_LUX_THRESHOLD` it turns on to
-  `LIGHTING_AUTO_BRIGHTNESS`; at/above it, it turns the zone off. All three
-  are env vars (`.env`), not hardcoded.
+  plug polling — see `app/lighting.py`) reads the latest BH1750 `lux` reading
+  every `LIGHTING_POLL_INTERVAL` seconds and adjusts brightness to hold the
+  room at `target_lux`, capped at `LIGHTING_AUTO_BRIGHTNESS`. One controller
+  drives every `auto` zone, since there is one sensor and one room.
+
+  `GET /devices` adds an `auto` object to each `auto` bulb row so the outcome is
+  visible rather than guessed:
+
+  ```json
+  "auto": {"state": "too_bright", "detail": "Room already brighter than target (315 lx vs 5 lx) — zone off.",
+           "target_lux": 5.0, "measured_lux": 315.0, "brightness": 0}
+  ```
+
+  `state` is one of `holding` (at target), `converging`, `too_bright` (ambient
+  alone exceeds the target — bulbs already off, nothing more to give), `at_max`
+  (at the brightness ceiling and still short), `off` (`target_lux` is 0),
+  `no_reading`, `stale` (no lux for `LIGHTING_STALE_AFTER_S`). The two saturated
+  states are normal outcomes, not errors.
 
 ## Scenes (house modes)
 
@@ -349,13 +362,15 @@ stage `stages` (for the hypnogram), and the night's `subjective` rating:
   dashboard's gear dialog uses this). Rejects `min >= max` with 400.
   A reading outside its range flags the widget with a HIGH/LOW chip, and
   the detail charts shade the out-of-range region as a faint red zone.
-- `GET /settings/lighting` → `{"lux_off": 50.0}` — the ambient level at which
-  a zone in `auto` mode is fully off. Brightness ramps **linearly** from
-  `LIGHTING_AUTO_BRIGHTNESS` at pitch dark down to nothing there, so this one
-  number sets the whole curve. Seeded from `LIGHTING_LUX_THRESHOLD`.
-- `PUT /settings/lighting` → same shape. `0` is allowed and means "never light
-  up from lux"; negative or non-numeric is 400. Pokes the lighting job so the
-  change lands on the next tick rather than up to an interval later.
+- `GET /settings/lighting` → `{"target_lux": 5.0}` — the **measured** room
+  illuminance a zone in `auto` mode holds. This is a setpoint, not a curve: a
+  closed loop drives the BH1750 reading to it (see `app/lighting_control.py`).
+  Seeded from `LIGHTING_TARGET_LUX`. It replaced `lux_off`, the cutoff of the
+  earlier open-loop ramp; a stored `lux_off` is ignored rather than converted,
+  since one was the top of a fade and this is a target.
+- `PUT /settings/lighting` → same shape. `0` is allowed and means "auto mode
+  never lights the room"; negative or non-numeric is 400. Pokes the lighting job
+  so the change lands on the next tick rather than up to an interval later.
 - `GET /settings/sleep-schedule` →
   `{"enabled": true, "sleep_time": "00:00", "wake_time": "09:30"}` — the
   recurring nightly Sleeping window, local "HH:MM".

@@ -76,20 +76,21 @@ def get_lighting_settings():
 
 @api.put("/settings/lighting")
 def put_lighting_settings():
-    """Auto-lighting settings. Body: {"lux_off": 50} — the ambient level at
-    which a zone in 'auto' mode is fully off; brightness ramps linearly from
-    full at pitch dark down to nothing there."""
+    """Auto-lighting settings. Body: {"target_lux": 5} — the room illuminance a
+    zone in 'auto' mode holds. The loop drives the measured BH1750 level to it
+    and reports when it cannot (ambient already brighter, or bulb at maximum);
+    0 disables auto lighting."""
     body = request.get_json(silent=True) or {}
-    value = body.get("lux_off")
+    value = body.get("target_lux")
     if value is None or value == "":
-        return jsonify({"error": "lux_off is required"}), 400
+        return jsonify({"error": "target_lux is required"}), 400
     try:
-        lux_off = float(value)
+        target_lux = float(value)
     except (TypeError, ValueError):
-        return jsonify({"error": "lux_off must be a number"}), 400
-    if lux_off < 0:
-        return jsonify({"error": "lux_off must be 0 or more"}), 400
-    clean = {"lux_off": lux_off}
+        return jsonify({"error": "target_lux must be a number"}), 400
+    if target_lux < 0:
+        return jsonify({"error": "target_lux must be 0 or more"}), 400
+    clean = {"target_lux": target_lux}
     db.set_lighting(clean)
     log.info("Auto-lighting settings updated: %s", clean)
     lighting.poke()  # apply on the next tick, not up to an interval later
@@ -189,6 +190,13 @@ def _attach_device_state(device: dict) -> dict:
         device["power"] = db.latest_power(device["id"])
     elif device["type"] == "bulb_zone":
         device["light"] = _bulb_state_or_none(device["id"])
+        # Auto-lighting controller state, so the card can say "room already
+        # brighter than target" rather than looking like it did nothing. One
+        # controller drives every auto zone (see app/lighting.py), so this is
+        # the same snapshot on each row — carried per-row because that is
+        # where the dashboard already looks.
+        if device.get("mode") == "auto":
+            device["auto"] = lighting.status
     return device
 
 

@@ -103,7 +103,7 @@ Plugs are seeded from `MYSTROM_PLUG_IP` / `MYSTROM_PLUG2_IP` in `.env`; to add
 a third, extend `PLUG_SEEDS` in `app/db.py` and add its IP to `.env`. Bulb
 zones work the same way via `SHELLY_CUPBOARD_IP` / `SHELLY_ROOM_LED_IP` and
 `BULB_SEEDS`. Auto-lighting behavior (poll interval, lux threshold, target
-brightness) is tuned via `LIGHTING_POLL_INTERVAL` / `LIGHTING_LUX_THRESHOLD`
+brightness) is tuned via `LIGHTING_POLL_INTERVAL` / `LIGHTING_TARGET_LUX`
 / `LIGHTING_AUTO_BRIGHTNESS` in `.env`.
 
 The DB path defaults to `./data/home.db` (gitignored); point `DB_PATH` at the
