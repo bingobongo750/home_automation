@@ -577,7 +577,20 @@ keep this list in sync when endpoints change:
   overlapping events share the column side by side. A drag on the day/week grid can
   start in one day column and end in another → a **multi-day timed** event, clipped
   into each day column it spans; a drag across **month** cells (and a plain month click,
-  since month is day-granular) makes an **all-day** event. All-day events render as
+  since month is day-granular) makes an **all-day** event.
+  **Creating from the grid is mouse-only** (`pointerType === "mouse"` in
+  `onGridPointerDown` / `onMonthPointerDown`) — on a touch screen the grid is inert.
+  It briefly had a tap-to-create for touch and that was a mistake: the grid is a tall
+  scroll surface, so a finger lands on it constantly just getting down the page, and
+  every contact opened the new-event dialog. No gesture separates "create here" from
+  "I was scrolling", because the discriminator on a desktop is the drag and on touch
+  the drag *is* the scroll — so tap-to-create fires on the accidents and still can't
+  express a duration. On touch, the **+** button is the only way to create; tapping an
+  existing event/bar/chip still opens it (those are `click` handlers, specific enough
+  not to be hit by accident). Don't reintroduce tap-to-create. The `.cal-hint` text
+  and `.cal-col`'s crosshair cursor swap on `(pointer: coarse)` to match — keyed on
+  input type, not width, since a mouse drag works at any window size.
+  All-day events render as
   spanning bars in the all-day row above the day/week grid (lane-packed, `‹ ›` arrows
   when they run past the visible edge) and as continuation chips across month cells; the
   dialog has an All-day toggle that swaps the start/end inputs between datetime and date

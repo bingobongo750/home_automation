@@ -2620,16 +2620,10 @@ function onMonthPointerDown(e) {
       || e.target.closest(".cal-chip")
       || e.target.closest(".cal-cell-day")
       || e.target.closest(".cal-more")) return;
+  // Mouse only — see the note on onGridPointerDown. A touch on the calendar
+  // creates nothing; the + button is the only way in.
+  if (e.pointerType !== "mouse") return;
   const startTs = Number(e.currentTarget.dataset.ts);
-  if (e.pointerType !== "mouse") {
-    // touch/pen: a tap makes that one day, same as the time grid. Dragging
-    // would fight the page's own scrolling, and the drag that loses that
-    // fight ends in pointercancel rather than pointerup — which used to
-    // leave the listeners below attached and calDragging stuck true,
-    // permanently blocking the planner's 30s refresh.
-    openEventDialog(null, startTs, null, true);
-    return;
-  }
   let endTs = startTs, moved = false;
   const cells = [...calendarEl.querySelectorAll(".cal-cell")];
   const paint = () => {
@@ -2709,15 +2703,18 @@ function renderDragGhost(startTs, endTs) {
 
 function onGridPointerDown(e) {
   if (e.button !== 0 || e.target.closest(".cal-event")) return;
-  const col = e.currentTarget;
-  const dayStart = Number(col.dataset.ts);
-  if (e.pointerType !== "mouse") {
-    // touch/pen: a plain tap places a one-hour block (a drag would fight the
-    // grid's own touch scrolling)
-    const m = gridYToMin(col, e.clientY);
-    openEventDialog(null, dayStart + m * 60, dayStart + (m + 60) * 60);
-    return;
-  }
+  /* MOUSE ONLY, deliberately. The grid is a 672px-tall scroll surface, so on a
+     phone a finger lands on it constantly just getting down the page — and
+     every one of those contacts used to open the new-event dialog. There is no
+     gesture that separates "I meant to create an event here" from "I was
+     scrolling", because the useful discriminator on a desktop is the drag, and
+     a drag on touch is the scroll. A tap-to-create with no drag is all
+     downside: it fires on the accidents and still cannot express a duration.
+     So touches on the grid do nothing at all. Creating is the + button;
+     tapping an existing .cal-event / .cal-chip / .cal-allday-bar still opens
+     it for inspection, since those are `click` handlers elsewhere and are
+     specific enough not to be hit by accident. */
+  if (e.pointerType !== "mouse") return;
   const t0 = gridTimeAt(e.clientX, e.clientY);
   let t1 = t0, moved = false;
   calDragging = true;

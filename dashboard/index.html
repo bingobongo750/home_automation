@@ -359,7 +359,13 @@
           <button class="add-btn" id="event-add-btn" title="Add event" aria-label="Add event">+</button>
         </div>
         <div class="calendar" id="calendar"></div>
-        <p class="card-note cal-hint">Drag on the grid to block out a new event · click an event for details.</p>
+        <!-- Two hints, one per input type, swapped in CSS on (pointer: coarse)
+             — dragging the grid to create is mouse-only, because on a touch
+             screen that gesture is the page scroll (see onGridPointerDown). -->
+        <p class="card-note cal-hint">
+          <span class="hint-pointer">Drag on the grid to block out a new event · click an event for details.</span>
+          <span class="hint-touch">Tap + to add an event · tap an event for details.</span>
+        </p>
       </article>
     </section>
 

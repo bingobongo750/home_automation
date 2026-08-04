@@ -1076,6 +1076,20 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 
 .cal-hint { margin-top: 10px; }
+/* Keyed on the primary input, NOT on width: dragging the grid to create an
+   event works with a mouse at any window size, and never works with a finger.
+   A touchscreen laptop driven by its trackpad reports `pointer: fine` and
+   correctly keeps the drag hint. */
+.cal-hint .hint-touch { display: none; }
+@media (pointer: coarse) {
+  .cal-hint .hint-pointer { display: none; }
+  .cal-hint .hint-touch { display: inline; }
+}
+/* The crosshair advertises a drag surface, which a touch device has no way to
+   use — and the grid is not a create surface there at all. */
+@media (pointer: coarse) {
+  .cal-col { cursor: default; }
+}
 
 /* ---- day/week time grid (columns set inline by app.js) ---- */
 
