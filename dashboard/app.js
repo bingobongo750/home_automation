@@ -13,6 +13,10 @@
 const POLL_FAST_MS = 5000;   // latest values, plug states, ticker
 const POLL_SLOW_MS = 30000;  // sparklines + open detail dialog
 const SPARK_RANGE = "3h";
+/* Every widget's detail chart opens on this range, every time — not just the
+   first time. A range picked while looking at one metric should not silently
+   become the frame you read the next one through. */
+const DEFAULT_DETAIL_RANGE = "3h";
 
 /* allowNegative: whether a chart's y-axis may drop below zero. Only
    temperature can legitimately be negative — a humidity, lux, CO2 or watt
@@ -308,8 +312,8 @@ function plugPairDOM(device) {
       <div class="spark" aria-hidden="true"></div>
       <div class="widget-detail" hidden>
         <div class="detail-range" role="group" aria-label="History range">
-          <button class="range-btn" data-range="3h">3h</button>
-          <button class="range-btn active" data-range="24h">24h</button>
+          <button class="range-btn active" data-range="3h">3h</button>
+          <button class="range-btn" data-range="24h">24h</button>
           <button class="range-btn" data-range="7d">7d</button>
         </div>
         <div class="chart chart-tall"></div>
@@ -793,6 +797,16 @@ function wireWidget(widget) {
 function openDetail(widget) {
   if (openWidget) closeDetail();
   openWidget = widget;
+  // Always open on the default range, never on whatever was picked last time.
+  // A 7d frame chosen while looking at CO2 should not silently become how you
+  // read temperature ten minutes later — the axis label is easy to miss, and
+  // misreading a week as a day is worse than one extra click.
+  const rangeGroup = widget._detail.querySelector(".detail-range");
+  if (rangeGroup) {
+    widget.dataset.range = DEFAULT_DETAIL_RANGE;
+    rangeGroup.querySelectorAll(".range-btn").forEach((b) =>
+      b.classList.toggle("active", b.dataset.range === DEFAULT_DETAIL_RANGE));
+  }
   document.getElementById("detail-title").textContent =
     widget.dataset.name || widget.querySelector(".card-label").textContent;
   document.getElementById("detail-key").textContent =
@@ -1316,7 +1330,7 @@ function secondsSinceMidnight() {
 }
 
 async function loadDetail(widget) {
-  const range = widget.dataset.range || "24h";
+  const range = widget.dataset.range || DEFAULT_DETAIL_RANGE;
   const kind = widget.dataset.widget;
   const detail = widget._detail;
   try {

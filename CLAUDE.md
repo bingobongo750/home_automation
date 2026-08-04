@@ -482,6 +482,10 @@ keep this list in sync when endpoints change:
   line. Selection is horizontal only — the question is always about a time range, never
   a value range — and clears on a plain click, a range/metric change, or closing the
   overlay, since a selection belongs to the chart that produced it.
+- Every detail chart opens on **3h** (`DEFAULT_DETAIL_RANGE`), **every time** — the range
+  resets on open rather than persisting. A 7d frame picked while reading CO2 must not
+  silently become how the next metric is read; the axis label is easy to miss, and
+  misreading a week as a day is worse than one extra click.
 - Each widget expands on click into an **overlay dialog** (detail view: range-scoped chart,
   min/max/avg stats, "typical now" 7d-avg-by-time-of-day) rather than expanding in place —
   in-place expansion was rejected because it reflowed the grid out from under the cursor.
