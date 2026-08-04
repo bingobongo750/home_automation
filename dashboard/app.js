@@ -2078,17 +2078,38 @@ viewButtons.forEach((btn) => btn.addEventListener("click", () => showView(btn.da
    as continuation chips across month cells; timed multi-day events clip into
    each day column. Tasks add/edit through a small inline row behind the +. */
 
-/* Calendar zoom. The hour height used to be 44 here AND in three places in
-   styles.css behind a "keep in sync" comment. It is now one CSS custom
-   property that both sides read, so there is nothing left to keep in sync.
+/* Two independent, persisted calendar knobs. They were tangled together
+   before, which is what made "resize" mean the wrong thing:
 
-   Both the zoom level and the viewport height persist: a calendar you have
-   sized to your screen should still be that size tomorrow. */
+     --cal-size     the physical size of the calendar WINDOW on the page: the
+                    visible height of the grid box, the month row height, and
+                    the page width the planner claims. Set here, every
+                    dimension derived from it in styles.css.
+     --cal-hour-px  the height of one hour INSIDE that window (the scale). The
+                    hour height used to be 44 here AND in three places in
+                    styles.css behind a "keep in sync" comment; it is now one
+                    custom property both sides read.
+
+   The window height used to come from a CSS `resize: vertical` grip on
+   .cal-scroll, captured with a ResizeObserver — and that fed back on itself.
+   box-sizing is border-box and .cal-scroll carries a 1px top border, so
+   contentRect.height reported one pixel LESS than the max-height that produced
+   it. Saving that back shrank the box, which the observer saw, and saved
+   shorter again: the calendar walked itself smaller a pixel at a time, every
+   render, and localStorage kept the result across reloads. An explicit stepper
+   has no such loop — nothing reads a size back out of the layout. */
 const CAL_ZOOM_KEY = "hub-cal-hour-px";
-const CAL_VIEWPORT_KEY = "hub-cal-viewport-px";
+const CAL_SIZE_KEY = "hub-cal-size";
 const CAL_HOUR_MIN = 28;      // below this, event labels stop fitting
 const CAL_HOUR_MAX = 160;
 const CAL_HOUR_DEFAULT = 56;  // was 44 — a roomier default, as asked
+const CAL_SIZE_MIN = 0.7;
+const CAL_SIZE_MAX = 1.6;
+const CAL_SIZE_STEP = 0.1;
+
+// The old key holds a height the shrink loop had already eaten into. Drop it
+// rather than migrate it — the value is the bug.
+localStorage.removeItem("hub-cal-viewport-px");
 
 function calHourPx() {
   const v = parseFloat(getComputedStyle(document.documentElement)
@@ -2106,48 +2127,43 @@ function setCalHourPx(px, { redraw = true } = {}) {
   if (redraw && typeof renderCalendar === "function") renderCalendar();
 }
 
+function calSize() {
+  const v = parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue("--cal-size"));
+  return Number.isFinite(v) && v > 0 ? v : 1;
+}
+
+/* No redraw: nothing inside the grid is positioned from --cal-size, CSS
+   derives the whole box. That also means the scroll position survives. */
+function setCalSize(size) {
+  const clamped = Math.round(
+    Math.min(Math.max(size, CAL_SIZE_MIN), CAL_SIZE_MAX) * 100) / 100;
+  document.documentElement.style.setProperty("--cal-size", String(clamped));
+  localStorage.setItem(CAL_SIZE_KEY, String(clamped));
+  const label = document.getElementById("cal-size-label");
+  if (label) label.textContent = `${Math.round(clamped * 100)}%`;
+}
+
 function restoreCalendarSizing() {
-  const saved = parseFloat(localStorage.getItem(CAL_ZOOM_KEY));
-  setCalHourPx(Number.isFinite(saved) ? saved : CAL_HOUR_DEFAULT, { redraw: false });
-  const savedVp = parseFloat(localStorage.getItem(CAL_VIEWPORT_KEY));
-  if (Number.isFinite(savedVp)) {
-    document.documentElement.style.setProperty("--cal-viewport-px", `${savedVp}px`);
-  }
+  const savedHour = parseFloat(localStorage.getItem(CAL_ZOOM_KEY));
+  setCalHourPx(Number.isFinite(savedHour) ? savedHour : CAL_HOUR_DEFAULT, { redraw: false });
+  const savedSize = parseFloat(localStorage.getItem(CAL_SIZE_KEY));
+  setCalSize(Number.isFinite(savedSize) ? savedSize : 1);
 }
 restoreCalendarSizing();
 
-/* Zoom controls, plus persistence for the drag-resized viewport. Wired on
-   DOMContentLoaded-equivalent (this script runs at the end of body). */
+/* Wired at load (this script runs at the end of body). */
 function wireCalendarSizing() {
-  const step = (factor) => setCalHourPx(calHourPx() * factor);
-  document.getElementById("cal-zoom-in").addEventListener("click", () => step(1.25));
-  document.getElementById("cal-zoom-out").addEventListener("click", () => step(0.8));
+  const zoom = (factor) => setCalHourPx(calHourPx() * factor);
+  document.getElementById("cal-zoom-in").addEventListener("click", () => zoom(1.25));
+  document.getElementById("cal-zoom-out").addEventListener("click", () => zoom(0.8));
+  const resize = (delta) => setCalSize(calSize() + delta);
+  document.getElementById("cal-size-in").addEventListener("click", () => resize(CAL_SIZE_STEP));
+  document.getElementById("cal-size-out").addEventListener("click", () => resize(-CAL_SIZE_STEP));
   document.getElementById("cal-zoom-reset").addEventListener("click", () => {
+    setCalSize(1);
     setCalHourPx(CAL_HOUR_DEFAULT);
-    localStorage.removeItem(CAL_VIEWPORT_KEY);
-    document.documentElement.style.removeProperty("--cal-viewport-px");
   });
-
-}
-
-/* The grid's bottom edge is CSS-resizable; remember wherever it is left.
-   ResizeObserver rather than a drag handler because the browser performs the
-   resize, not us. .cal-scroll is rebuilt on every render, so this re-attaches
-   — guarded by a flag so a re-render does not stack observers. */
-let _calResizeSaveTimer = null;
-function observeCalendarResize() {
-  const scroll = document.querySelector(".cal-scroll");
-  if (!scroll || !("ResizeObserver" in window) || scroll.dataset.resizeObserved) return;
-  scroll.dataset.resizeObserved = "1";
-  new ResizeObserver((entries) => {
-    const h = Math.round(entries[0].contentRect.height);
-    if (h < 120) return;                     // ignore collapse/teardown noise
-    clearTimeout(_calResizeSaveTimer);       // one write per drag, not per frame
-    _calResizeSaveTimer = setTimeout(() => {
-      localStorage.setItem(CAL_VIEWPORT_KEY, String(h));
-      document.documentElement.style.setProperty("--cal-viewport-px", `${h}px`);
-    }, 400);
-  }).observe(scroll);
 }
 wireCalendarSizing();
 const CAL_SNAP_MIN = 15;  // drag-to-create snaps to quarter hours
@@ -2505,7 +2521,6 @@ function renderTimeGrid(nDays) {
   calendarEl.appendChild(scroll);
   scroll.scrollTop = calScrollTop !== null ? calScrollTop : 7.5 * calHourPx();
   scroll.addEventListener("scroll", () => { calScrollTop = scroll.scrollTop; });
-  observeCalendarResize();   // .cal-scroll is rebuilt each render
 }
 
 function renderMonth() {

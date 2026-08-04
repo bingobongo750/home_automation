@@ -974,6 +974,16 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 @media (max-width: 960px) { .planner-grid { grid-template-columns: 1fr; } }
 
+/* Page width is the other half of "how big is the calendar window". Above
+   100% the planner breaks out of main's 1180px column, staying centred, and is
+   capped so it can never run off the screen. At --cal-size: 1 this resolves to
+   exactly main's content box, so the default layout is untouched. */
+#view-planner {
+  --planner-w: min(calc(100% * var(--cal-size, 1)), calc(100vw - 40px));
+  width: var(--planner-w);
+  margin-left: calc((100% - var(--planner-w)) / 2);
+}
+
 /* the square + (add event / add task); rotates into × while a form is open */
 .add-btn {
   flex: none;
@@ -1091,17 +1101,22 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 .cal-allday-bar { margin: 0 2px; }
 
-/* Calendar zoom. --cal-hour-px is the ONE definition of an hour's height:
-   app.js reads it back rather than carrying its own copy, because the previous
-   arrangement duplicated 44 in three places with a "keep in sync" comment,
-   which is not a mechanism. Both values are set on :root by app.js from
-   localStorage. */
+/* Two separate knobs, both set on :root by app.js from localStorage, both a
+   single definition that everything else derives from:
+
+   --cal-hour-px  the height of one hour INSIDE the grid (the scale). app.js
+                  reads it back rather than carrying its own copy, because the
+                  previous arrangement duplicated 44 in three places behind a
+                  "keep in sync" comment, which is not a mechanism.
+   --cal-size     the physical size of the calendar WINDOW on the page — the
+                  visible height of the grid box (below) and the page width the
+                  planner claims (see #view-planner). A plain multiplier, so
+                  every dimension it drives stays in proportion. */
 .cal-scroll {
   position: relative;
-  max-height: var(--cal-viewport-px, 720px);
+  max-height: calc(720px * var(--cal-size, 1));
   overflow-y: auto;
   border-top: 1px solid var(--hairline);
-  resize: vertical;   /* drag the bottom edge; the height is remembered */
 }
 
 .cal-hours { position: relative; height: calc(var(--cal-hour-px, 56) * 24px); }
@@ -1244,7 +1259,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 
 .cal-cell {
-  min-height: 86px;
+  min-height: calc(86px * var(--cal-size, 1));   /* month rows size with the window too */
   padding: 3px;
   border-right: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
@@ -1932,7 +1947,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   cursor: default;
 }
 
-/* Calendar zoom controls */
+/* Calendar size + scale controls */
 .cal-zoom {
   display: inline-flex;
   align-items: center;
@@ -1948,7 +1963,12 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   min-width: 34px;
   text-align: center;
 }
+.cal-zoom-cap {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--baseline);
+  padding-left: 3px;
+}
 .cal-zoom-reset { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; }
-
-/* the resize grip only makes sense on a pointer device */
-@media (hover: none) { .cal-scroll { resize: none; } }

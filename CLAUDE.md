@@ -542,12 +542,27 @@ keep this list in sync when endpoints change:
   render red, and a night can be **deleted** from that dialog — a stray Sleeping toggle
   records a junk few-minute "night" that would otherwise drag the mean those flags are
   measured against.
-- **Calendar sizing is user-owned and persisted.** `--cal-hour-px` is the single
-  definition of an hour's height — `app.js` reads it back rather than keeping its own
-  copy, because it used to be `44` in JS *and* three places in CSS behind a "keep in
-  sync" comment, which is not a mechanism. Default is 56 px (was 44). The toolbar's
-  −/+/reset scale it (28–160 px), and the grid's bottom edge is CSS-resizable; both the
-  zoom level and the dragged viewport height persist in localStorage.
+- **Calendar sizing is user-owned and persisted, and is two separate knobs** — the
+  toolbar carries a **size** stepper and a **scale** stepper, plus one reset for both.
+  They are different questions and were wrong when conflated:
+  - **`--cal-size`** is the *physical size of the calendar window on the page*: the
+    grid box's visible height (`720px ×`), the month row height (`86px ×`), and the
+    page width the planner claims. A plain multiplier (0.7–1.6, 0.1 steps) set by
+    `app.js`; every dimension is derived from it in CSS. Above 1.0 `#view-planner`
+    breaks out of `main`'s 1180 px column, staying centred and capped at
+    `100vw - 40px` so it can never overflow the screen; at exactly 1.0 it resolves to
+    `main`'s content box, so the default layout is untouched.
+  - **`--cal-hour-px`** is the *scale inside* that window — the single definition of
+    an hour's height, which `app.js` reads back rather than keeping its own copy
+    (it used to be `44` in JS *and* three places in CSS behind a "keep in sync"
+    comment, which is not a mechanism). Default 56 px, range 28–160.
+  Window height is **never read back out of the layout.** It used to be: a CSS
+  `resize: vertical` grip on `.cal-scroll` was captured with a `ResizeObserver` and
+  persisted, but `box-sizing` is border-box and `.cal-scroll` has a 1px top border, so
+  `contentRect.height` came back one pixel short of the `max-height` that produced it
+  — saved, applied, observed shorter again. The calendar walked itself smaller a pixel
+  per render and localStorage carried the damage across reloads. Don't reintroduce a
+  measure-and-store loop for a dimension the user sets.
 - Planner UI conventions: the calendar is an Apple-Calendar-style **time grid** with
   Day/Week/Month views (weeks start Monday, compact 24h times, copper now-line on
   today) — timed events occupy their duration as blocks tinted by their category color,
