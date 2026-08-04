@@ -580,7 +580,7 @@
       </div>
 
       <h4 class="settings-section">Nightly sleep</h4>
-      <p class="settings-hint">Switches the house to Sleeping and back to Day on its own,
+      <p class="settings-hint">Switches the house to Sleeping and back to Home on its own,
          every day. A scene change only — never an alarm, no sound or notification.</p>
       <div class="threshold-row">
         <span class="th-label">Run every night</span>
@@ -628,7 +628,7 @@
 </div>
 
 <!-- Sleeping-scene dialog: activation plus the optional wake time. The
-     scheduled switch only changes the scene back to Day — it is NOT an alarm. -->
+     scheduled switch only changes the scene back to Home — it is NOT an alarm. -->
 <div class="detail-overlay" id="sleep-overlay" hidden>
   <div class="detail-backdrop" id="sleep-backdrop"></div>
   <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="sleep-title">
@@ -640,10 +640,10 @@
       <button class="detail-close" id="sleep-close" aria-label="Close">×</button>
     </header>
     <p class="settings-hint">Every lighting zone off, every unlocked plug off. Auto
-       lighting pauses until the house returns to Day.</p>
+       lighting pauses until the house returns to Home.</p>
     <form id="sleep-form">
       <label class="sleep-wake-row">
-        <span>Auto-switch to Day at</span>
+        <span>Auto-switch to Home at</span>
         <input type="time" id="wake-time-input">
       </label>
       <p class="settings-hint">Optional — leave blank to stay in Sleeping until you change

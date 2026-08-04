@@ -34,7 +34,10 @@
 
 body {
   margin: 0;
-  min-height: 100vh;
+  /* dvh, not vh: iOS Safari's toolbar collapses on scroll, and 100vh is
+     measured against the *expanded* toolbar — so a vh-sized page is always
+     taller than the screen and always scrolls a little. */
+  min-height: 100dvh;
   background: var(--page);
   color: var(--ink);
   font-family: var(--sans);
@@ -79,9 +82,16 @@ button:focus-visible, .widget:focus-visible { outline: 2px solid var(--copper); 
   margin-left: 10px;
 }
 
+/* flex-wrap is load-bearing, not cosmetic: unwrapped, these four groups need
+   ~600px and simply overflowed the body on a narrow screen. A mobile browser
+   answers a document wider than its viewport by GROWING the layout viewport to
+   fit — which rescales the whole page and makes 100vw, and every
+   position:fixed overlay, resolve against 620px on a 393px phone. Nothing in
+   here may set the document's width. */
 .header-tools {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -326,11 +336,15 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   background: rgba(5, 8, 6, 0.72);
 }
 
+/* Sized against the overlay (position:fixed, inset:0 — i.e. the viewport), not
+   against vw. Those agree until something overflows the document horizontally,
+   at which point vw silently becomes the wider number and the panel centres
+   itself half off-screen. Percent of a fixed parent cannot drift that way. */
 .detail-panel {
   position: relative;
   margin: 7vh auto 0;
-  width: min(860px, 94vw);
-  max-height: 86vh;
+  width: min(860px, calc(100% - 24px));
+  max-height: 86dvh;
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid rgba(233, 237, 230, 0.16);
@@ -371,7 +385,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .widget-detail[hidden] { display: none; }
 
 /* threshold settings dialog */
-.settings-panel { width: min(480px, 94vw); }
+.settings-panel { width: min(480px, calc(100% - 24px)); }
 
 .settings-hint { margin: 4px 0 16px; font-size: 12.5px; color: var(--muted); }
 
@@ -1815,10 +1829,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .vitals-chart { height: 240px; }
 
 /* ------------------------------------------------------------ responsive */
-
-@media (max-width: 640px) {
-  .board-header, main { padding-left: 16px; padding-right: 16px; }
-}
+/* The phone layout lives in one block at the end of this file — see there. */
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
@@ -1922,8 +1933,17 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 .chart-selection .tt-value { color: var(--ink); font-size: 13px; font-weight: 600; }
 
-/* the chart is a drag surface now, so say so and stop text selection fighting it */
-.chart svg { cursor: crosshair; user-select: none; -webkit-user-select: none; }
+/* The chart is a drag surface now, so say so and stop text selection fighting
+   it. touch-action: pan-y splits the gesture on a phone — a vertical swipe
+   still scrolls the page, a horizontal one reaches the selection handler
+   instead of being swallowed as a pan. Without it, drag-to-select is simply
+   unreachable with a finger. */
+.chart svg {
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-y;
+}
 
 /* Events mirrored from Apple Calendar. Distinct but not louder than your own
    entries — a dashed edge reads as "not yours to edit" without competing with
@@ -1972,3 +1992,186 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   padding-left: 3px;
 }
 .cal-zoom-reset { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; }
+
+/* ================================================================= phone
+
+   One DOM, one stylesheet, one JS bundle — the phone gets a different
+   LAYOUT, never a different page. A separate mobile document (UA-sniffed on
+   the host) was the alternative and was rejected: two dashboards to keep in
+   step, and whichever one you are not looking at is the one that rots.
+
+   Everything a stylesheet can decide is decided here. The three things it
+   cannot — which calendar view opens, whether the persisted calendar sizing
+   applies, and how a touch drag is interpreted — hang off `isPhone()` in
+   app.js. Keep this 700px breakpoint in sync with PHONE_QUERY there.
+
+   Two invariants hold every rule below together:
+
+   1. NOTHING may make the document wider than the viewport. A mobile browser
+      responds to horizontal overflow by growing its layout viewport to fit,
+      which rescales the entire page and re-resolves 100vw and every
+      position:fixed overlay against the wider number. One un-wrapped header
+      row used to cost 620px of layout on a 393px screen, and the visible
+      symptom was the detail dialog hanging half off the left edge — nowhere
+      near the cause.
+   2. Anything a finger taps is >= 44px in its smaller dimension (Apple HIG).
+      Where 44px of visible control would wreck the silkscreen density, the
+      box stays small and a transparent ::before extends the hit area
+      instead.                                                              */
+
+@media (max-width: 700px) {
+
+  /* ---- header: the two segmented switches become stacked full-width bars,
+     which is also the easiest thing to hit with a thumb ---- */
+  .board-header { padding: 14px 16px 0; }
+  main { padding: 8px 16px 40px; }
+  .zone { margin-top: 20px; }
+
+  .header-row { gap: 10px; }
+  .board-name { font-size: 15px; }
+  .board-sub { display: block; margin-left: 0; margin-top: 2px; font-size: 12px; }
+
+  .header-tools { width: 100%; gap: 8px; }
+
+  /* VIEW is the primary navigation, so it gets its own full-width row */
+  .view-switch { flex: 1 1 100%; }
+  /* MODE shares the next row with the link dot and the gear */
+  .scene-switch { flex: 1 1 auto; flex-wrap: wrap; }
+  .view-btn, .scene-btn {
+    flex: 1;
+    min-height: 44px;
+    font-size: 13px;
+    padding: 3px 6px;
+  }
+  /* only rendered while Away, and it is the one thing you want to hit
+     one-handed walking through the door — full width inside the group */
+  .im-home-btn:not([hidden]) { flex: 1 1 100%; }
+  .scene-note { flex: 1 1 100%; text-align: center; padding: 2px 0 4px; }
+
+  /* the dot IS the signal; "online" next to a green dot is 45px of nothing */
+  #link-label { display: none; }
+  .link-status { flex: none; }
+  .link-dot { width: 10px; height: 10px; }
+  .settings-btn {
+    flex: none;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  /* ---- overlay dialogs become full-screen sheets ----
+     A centred 86dvh card on a 390px screen is mostly backdrop, and its
+     inner scroll competes with the page's. The sheet scrolls as one surface
+     and the head sticks, so × is always reachable. */
+  .detail-overlay { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .detail-panel,
+  .detail-panel.settings-panel {
+    width: 100%;
+    margin: 0;
+    min-height: 100dvh;
+    max-height: none;
+    overflow-y: visible;
+    border: none;
+    border-radius: 0;
+    padding: 10px 16px 40px;
+  }
+  .detail-head {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    margin: 0 -16px 8px;
+    padding: 6px 16px 8px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .detail-close { min-width: 44px; min-height: 44px; }
+
+  /* ---- touch targets ---- */
+  .range-btn, .nav-btn, .color-mode-btn, .prio-seg-btn, .vtab,
+  .cat-btn, .rating-btn, .done-toggle, .ghost-btn, .save-btn,
+  .plug-lock-btn, .night-delete {
+    min-height: 44px;
+  }
+  .nav-btn { min-width: 44px; }
+  .add-btn, .summary-dismiss { width: 44px; height: 44px; }
+  .plug-lock-btn { min-width: 44px; justify-content: center; }
+
+  /* Sliders: a 6px-tall drag target is the worst thing on the board to hit
+     with a finger. The visible track stays 6px — background-clip confines the
+     warmth gradient to the content box — while the element itself grows to
+     44px of grabbable area, and the thumb grows with it. */
+  .light-brightness, .light-warmth { height: 44px; }
+  .light-warmth {
+    padding: 19px 0;
+    background-clip: content-box;
+  }
+  .light-warmth::-webkit-slider-thumb { width: 22px; height: 22px; margin-top: -8px; }
+  .light-warmth::-moz-range-thumb { width: 22px; height: 22px; }
+  .save-btn-small { min-height: 40px; }
+  .night-row { padding: 12px 10px; }
+
+  /* Row actions reveal on hover, which a touch screen does not have — so on
+     a phone they are simply always there. */
+  .row-actions { opacity: 1; gap: 4px; }
+  .row-btn { min-width: 44px; min-height: 44px; }
+
+  /* The checkbox stays a 16px silkscreen pad; only its hit area grows.
+     ::after is the checkmark, so ::before does the reaching. */
+  .task-check::before {
+    content: "";
+    position: absolute;
+    inset: -14px;
+  }
+  .task-row { padding: 4px 2px; }
+
+  /* ---- inputs: below 16px, iOS zooms the page on focus and leaves it
+     zoomed, which then makes the document wider than the viewport (see
+     invariant 1) ---- */
+  .threshold-row input,
+  .sleep-wake-row input,
+  .plug-unlock-input,
+  .event-title-input, .event-notes-input,
+  .event-fields input, .event-fields select,
+  .task-add-row input, .task-add-row select {
+    font-size: 16px;
+  }
+  .threshold-row input { width: 84px; }
+  .threshold-row input[type="time"],
+  .sleep-wake-row input[type="time"] { width: 124px; }
+  .threshold-row input[type="checkbox"] { width: 22px; height: 22px; }
+
+  /* ---- planner ----
+     --cal-size is forced to 1 in app.js on a phone, so the #view-planner
+     breakout resolves to main's content box; pinning it here as well means a
+     stale localStorage value can never widen the document before the JS
+     runs. The size/scale steppers are desktop affordances — there is exactly
+     one sensible calendar width on a 390px screen, and it is the screen. */
+  #view-planner { width: 100%; margin-left: 0; }
+  .cal-zoom, .cal-zoom-reset { display: none; }
+  .cal-scroll { max-height: 62dvh; }
+
+  /* Day/Week/Month takes its own row; nav + title + add share the next one.
+     flex-basis 0 with min-width 0 lets the title give way rather than force a
+     third row — app.js already shortens it to "Tue, 4 Aug" here. */
+  #cal-view { flex: 1 1 100%; margin-bottom: 0; }
+  #cal-view .range-btn { flex: 1; }
+  .cal-toolbar { gap: 8px; }
+  .cal-title {
+    flex: 1 1 0;
+    min-width: 0;
+    margin: 0;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* three 44px nav buttons + a 44px add button leaves the title ~130px; the
+     nav group is the one that can afford to be narrower than the HIG floor in
+     its horizontal axis, since ‹ › are 44px tall and side by side */
+  .cal-nav .nav-btn { min-width: 38px; }
+
+  /* ---- health: readouts sitting in 48px-gapped flex rows would overflow ---- */
+  .vitals-readout, .sd-target-times, .sd-cons-avg { gap: 24px; flex-wrap: wrap; }
+  .score-num { font-size: 38px; }
+  .resto-head { gap: 12px; }
+}

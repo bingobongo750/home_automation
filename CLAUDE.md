@@ -33,8 +33,11 @@ serve HTTP, call REST APIs.
    The host's server calls each WiFi device's local REST API directly over the LAN.
    Currently two device types:
    - Two **myStrom WiFi Switch** plugs (Swiss Type J, local REST API, power monitoring
-     2–3680W) — "Plug 1" is physically installed, "Plug 2" is seeded in
-     the `devices` table as a placeholder IP until it's physically installed.
+     2–3680W), named for what they run: **"Coffee machine"** (`192.168.0.51`) is
+     physically installed, **"Desk"** (`192.168.0.52`) is seeded in the `devices`
+     table as a placeholder IP until it's physically installed. (They were "Plug 1"
+     and "Plug 2"; `init_db()` renames those in place before the seed loop, so an
+     existing row is renamed rather than duplicated.)
    - Two **Shelly Multicolor Bulb E27 Gen3** smart bulbs ("Cupboard", the bulb in
      the cupboard, and "Room LED", the room's ambient bulb) — self-contained WiFi
      RGBW bulbs (local JSON-RPC API over HTTP, no cloud required) that screw into
@@ -591,6 +594,35 @@ keep this list in sync when endpoints change:
   the widget's list; editing a task never moves it between lists. Planner data loads on view
   switch and refreshes on the 30s tick (skipped mid-drag or while the event dialog is
   open) — never part of the 5s device poll.
+- **Phone layout: one DOM, one stylesheet, media queries.** The phone gets a
+  different *layout*, never a different page — a separate UA-sniffed mobile
+  document was considered and rejected (two dashboards to keep in step, and
+  whichever one you aren't looking at is the one that rots). Everything lives in
+  a single `@media (max-width: 700px)` block at the end of `styles.css`; the
+  only JS involvement is `isPhone()` in `app.js` for the three things CSS cannot
+  decide — the calendar opens on **Day**, the size/scale steppers are hidden and
+  their persisted values ignored (and **not** rewritten, so a narrowed desktop
+  window can't clobber the size chosen there), and the day title shortens to
+  "Tue, 4 Aug". Keep the breakpoint in sync between the two files. Two
+  invariants:
+  - **Nothing may make the document wider than the viewport.** A mobile browser
+    answers horizontal overflow by *growing its layout viewport* to fit, which
+    rescales the whole page and re-resolves `100vw` and every `position: fixed`
+    overlay against the wider number. One unwrapped `.header-tools` row cost
+    620px of layout on a 393px screen, and the visible symptom — the detail
+    dialog hanging half off the left edge — was nowhere near the cause. This is
+    why panels size off `calc(100% - 24px)` inside their fixed overlay rather
+    than `94vw`, and why inputs are 16px on phones (below that, iOS zooms on
+    focus and *stays* zoomed).
+  - **Anything a finger taps is ≥44px** in its smaller dimension. Where 44px of
+    visible control would wreck the silkscreen density, the box stays small and
+    a transparent `::before` extends the hit area (`.task-check`).
+  Touch also needs `pointercancel` handled wherever `pointerdown` starts a drag:
+  a gesture the browser claims as a scroll never sends `pointerup`, so a
+  listener attached on down stays attached. The chart selection and the month
+  grid both got this wrong; the day/week grid's existing "tap, don't drag" guard
+  is the pattern to copy. `touch-action: pan-y` on `.chart svg` is what keeps
+  drag-to-select reachable with a finger without eating page scroll.
 - Keep it a single lightweight web app served by the host — no separate build
   infrastructure beyond what's needed for a small SPA or server-rendered pages.
 - Live-ish updates (short polling interval or simple WebSocket) rather than manual

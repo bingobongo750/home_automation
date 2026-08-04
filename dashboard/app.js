@@ -18,6 +18,15 @@ const SPARK_RANGE = "3h";
    become the frame you read the next one through. */
 const DEFAULT_DETAIL_RANGE = "3h";
 
+/* Phone layout. The LAYOUT is CSS's job (see the phone block at the end of
+   styles.css) — this flag exists only for the handful of decisions a
+   stylesheet cannot make: which calendar view opens, and whether the
+   persisted calendar sizing applies at all. Keep the breakpoint in sync with
+   that block. Read live rather than cached at load, so rotating a phone or
+   dragging a desktop window narrow is answered correctly. */
+const PHONE_QUERY = window.matchMedia("(max-width: 700px)");
+function isPhone() { return PHONE_QUERY.matches; }
+
 /* allowNegative: whether a chart's y-axis may drop below zero. Only
    temperature can legitimately be negative — a humidity, lux, CO2 or watt
    axis running into negative numbers is nonsense, so those clamp at 0. */
@@ -96,7 +105,7 @@ function applyAlert(widget, state) {
    setting the plug + bulb zones in one shot (see /api/scenes). While a scene
    other than Day is active the backend pauses auto lighting; the lighting
    cards say so. Sleeping opens a dialog with an optional wake time (a
-   scheduled scene change back to Day — not an alarm). */
+   scheduled scene change back to Home — not an alarm). */
 
 let activeScene = null; // {name, activated_at, wake_time, wake_at} from /api/scenes/active
 let lastSummary = null; // /api/scenes/last-summary payload (or null)
@@ -257,7 +266,7 @@ async function pollFast() {
     ]);
     setLink(true);
     // scene first — the lighting cards' status lines depend on it. A
-    // server-side switch into Day (the wake timer firing) means a fresh
+    // server-side switch into Home (the wake timer firing) means a fresh
     // overnight summary is waiting.
     const prevSceneName = activeScene && activeScene.name;
     activeScene = scene;
@@ -289,12 +298,15 @@ function plugPairDOM(device) {
   pair.innerHTML = `
     <article class="card plug-control">
       <header class="card-head">
+        <h3 class="card-label"></h3>
+        <span class="head-right">
         <code class="wire-key"></code>
         <button class="plug-lock-btn" type="button" aria-pressed="false"
                 title="Lock to prevent power-off" disabled>
           <svg class="lock-icon-unlocked" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 7.75-1.5"></path></svg>
           <svg class="lock-icon-locked" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
         </button>
+        </span>
       </header>
       <p class="plug-room"></p>
       <button class="plug-switch" role="switch" aria-checked="false" disabled>
@@ -326,6 +338,7 @@ function plugPairDOM(device) {
     </article>`;
 
   // device fields are API data — set as text, never markup
+  pair.querySelector(".plug-control .card-label").textContent = device.name;
   pair.querySelector(".plug-control .wire-key").textContent = device.ip || "no ip";
   pair.querySelector(".plug-room").textContent = device.room || "";
 
@@ -1757,6 +1770,18 @@ function drawChart(container, points, opts) {
     dragFrom = null;
   });
 
+  /* Touch only: the browser claims the gesture as a page scroll and sends
+     pointercancel instead of pointerup. Without this the drag stayed "open",
+     and the next tap on the chart painted a selection running from wherever
+     the abandoned one started. (touch-action: pan-y in styles.css is the
+     other half — it gives vertical swipes to the page and horizontal ones to
+     the selection, so drag-to-select still works with a finger.) */
+  svg.addEventListener("pointercancel", (ev) => {
+    dragging = false;
+    dragFrom = null;
+    try { svg.releasePointerCapture(ev.pointerId); } catch { /* already gone */ }
+  });
+
   svg.addEventListener("pointermove", (ev) => {
     if (dragging && dragFrom !== null) paintSelection(dragFrom, tsAt(ev.clientX));
     const rect = svg.getBoundingClientRect();
@@ -2117,10 +2142,10 @@ function calHourPx() {
   return Number.isFinite(v) && v > 0 ? v : CAL_HOUR_DEFAULT;
 }
 
-function setCalHourPx(px, { redraw = true } = {}) {
+function setCalHourPx(px, { redraw = true, persist = true } = {}) {
   const clamped = Math.round(Math.min(Math.max(px, CAL_HOUR_MIN), CAL_HOUR_MAX));
   document.documentElement.style.setProperty("--cal-hour-px", clamped);
-  localStorage.setItem(CAL_ZOOM_KEY, String(clamped));
+  if (persist) localStorage.setItem(CAL_ZOOM_KEY, String(clamped));
   const label = document.getElementById("cal-zoom-label");
   if (label) label.textContent = `${Math.round((clamped / CAL_HOUR_DEFAULT) * 100)}%`;
   // Event blocks are positioned in px, so they have to be laid out again.
@@ -2135,22 +2160,39 @@ function calSize() {
 
 /* No redraw: nothing inside the grid is positioned from --cal-size, CSS
    derives the whole box. That also means the scroll position survives. */
-function setCalSize(size) {
+function setCalSize(size, { persist = true } = {}) {
   const clamped = Math.round(
     Math.min(Math.max(size, CAL_SIZE_MIN), CAL_SIZE_MAX) * 100) / 100;
   document.documentElement.style.setProperty("--cal-size", String(clamped));
-  localStorage.setItem(CAL_SIZE_KEY, String(clamped));
+  if (persist) localStorage.setItem(CAL_SIZE_KEY, String(clamped));
   const label = document.getElementById("cal-size-label");
   if (label) label.textContent = `${Math.round(clamped * 100)}%`;
 }
 
+/* On a phone both knobs are forced to their defaults and the steppers that
+   drive them are hidden (there is one sane calendar size on a 390px screen,
+   and it is "the screen"). Nothing is persisted in that state: the same
+   localStorage is shared with the desktop layout when a window is merely
+   dragged narrow, and a visit at phone width must not overwrite the size
+   chosen there. */
 function restoreCalendarSizing() {
+  const phone = isPhone();
   const savedHour = parseFloat(localStorage.getItem(CAL_ZOOM_KEY));
-  setCalHourPx(Number.isFinite(savedHour) ? savedHour : CAL_HOUR_DEFAULT, { redraw: false });
+  setCalHourPx(!phone && Number.isFinite(savedHour) ? savedHour : CAL_HOUR_DEFAULT,
+    { redraw: false, persist: !phone });
   const savedSize = parseFloat(localStorage.getItem(CAL_SIZE_KEY));
-  setCalSize(Number.isFinite(savedSize) ? savedSize : 1);
+  setCalSize(!phone && Number.isFinite(savedSize) ? savedSize : 1, { persist: !phone });
 }
 restoreCalendarSizing();
+
+/* Crossing the breakpoint (rotation, or a resized desktop window) re-applies
+   the sizing and re-picks the calendar view, so the layout never lands in a
+   state neither side would have produced. */
+PHONE_QUERY.addEventListener("change", () => {
+  restoreCalendarSizing();
+  if (calView !== "month") calView = isPhone() ? "day" : "week";
+  loadEvents();  // the view change moves the fetch window, so refetch, not redraw
+});
 
 /* Wired at load (this script runs at the end of body). */
 function wireCalendarSizing() {
@@ -2169,7 +2211,11 @@ wireCalendarSizing();
 const CAL_SNAP_MIN = 15;  // drag-to-create snaps to quarter hours
 const CATEGORIES = ["home", "work", "personal", "health", "social"]; // keep in sync with app/planner.py
 
-let calView = "week";        // "day" | "week" | "month"
+/* Week is the desktop default; a phone gets Day, because seven columns in
+   ~330px truncates every title to one character. renderCalendar() syncs the
+   toolbar buttons, so the markup's hardcoded `active` needs no counterpart
+   here. */
+let calView = isPhone() ? "day" : "week";   // "day" | "week" | "month"
 let calAnchor = new Date();  // any date inside the shown period
 let calScrollTop = null;     // preserved across grid rebuilds
 let calDragging = false;     // blocks the periodic refresh mid-drag
@@ -2276,7 +2322,12 @@ function calWindow() {
 
 function calTitle() {
   if (calView === "day") {
-    return calAnchor.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    /* "Tue, 4 Aug" on a phone. The long form is ~190px of mono, which is
+       exactly enough to push the + button onto a third toolbar row — and the
+       year is not information you need while paging through days. */
+    return isPhone()
+      ? calAnchor.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })
+      : calAnchor.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   }
   if (calView === "month") {
     return calAnchor.toLocaleDateString([], { month: "long", year: "numeric" });
@@ -2587,6 +2638,15 @@ function onMonthPointerDown(e) {
       || e.target.closest(".cal-cell-day")
       || e.target.closest(".cal-more")) return;
   const startTs = Number(e.currentTarget.dataset.ts);
+  if (e.pointerType !== "mouse") {
+    // touch/pen: a tap makes that one day, same as the time grid. Dragging
+    // would fight the page's own scrolling, and the drag that loses that
+    // fight ends in pointercancel rather than pointerup — which used to
+    // leave the listeners below attached and calDragging stuck true,
+    // permanently blocking the planner's 30s refresh.
+    openEventDialog(null, startTs, null, true);
+    return;
+  }
   let endTs = startTs, moved = false;
   const cells = [...calendarEl.querySelectorAll(".cal-cell")];
   const paint = () => {
