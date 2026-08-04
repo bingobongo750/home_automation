@@ -542,6 +542,12 @@ keep this list in sync when endpoints change:
   render red, and a night can be **deleted** from that dialog — a stray Sleeping toggle
   records a junk few-minute "night" that would otherwise drag the mean those flags are
   measured against.
+- **Calendar sizing is user-owned and persisted.** `--cal-hour-px` is the single
+  definition of an hour's height — `app.js` reads it back rather than keeping its own
+  copy, because it used to be `44` in JS *and* three places in CSS behind a "keep in
+  sync" comment, which is not a mechanism. Default is 56 px (was 44). The toolbar's
+  −/+/reset scale it (28–160 px), and the grid's bottom edge is CSS-resizable; both the
+  zoom level and the dragged viewport height persist in localStorage.
 - Planner UI conventions: the calendar is an Apple-Calendar-style **time grid** with
   Day/Week/Month views (weeks start Monday, compact 24h times, copper now-line on
   today) — timed events occupy their duration as blocks tinted by their category color,

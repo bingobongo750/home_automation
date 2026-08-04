@@ -1091,15 +1091,20 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 .cal-allday-bar { margin: 0 2px; }
 
+/* Calendar zoom. --cal-hour-px is the ONE definition of an hour's height:
+   app.js reads it back rather than carrying its own copy, because the previous
+   arrangement duplicated 44 in three places with a "keep in sync" comment,
+   which is not a mechanism. Both values are set on :root by app.js from
+   localStorage. */
 .cal-scroll {
   position: relative;
-  max-height: 560px;
+  max-height: var(--cal-viewport-px, 720px);
   overflow-y: auto;
   border-top: 1px solid var(--hairline);
+  resize: vertical;   /* drag the bottom edge; the height is remembered */
 }
 
-/* 24 h × 44 px/h = 1056 px — keep in sync with CAL_HOUR_PX in app.js */
-.cal-hours { position: relative; height: 1056px; }
+.cal-hours { position: relative; height: calc(var(--cal-hour-px, 56) * 24px); }
 .cal-hour-label {
   position: absolute;
   right: 6px;
@@ -1111,11 +1116,12 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 
 .cal-col {
   position: relative;
-  height: 1056px;
+  height: calc(var(--cal-hour-px, 56) * 24px);
   border-left: 1px solid var(--hairline);
   background: repeating-linear-gradient(
     to bottom,
-    var(--grid), var(--grid) 1px, transparent 1px, transparent 44px);
+    var(--grid), var(--grid) 1px, transparent 1px,
+    transparent calc(var(--cal-hour-px, 56) * 1px));
   cursor: crosshair;
   user-select: none;
   -webkit-user-select: none;
@@ -1925,3 +1931,24 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   opacity: 0.75;
   cursor: default;
 }
+
+/* Calendar zoom controls */
+.cal-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+}
+.cal-zoom-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 34px;
+  text-align: center;
+}
+.cal-zoom-reset { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; }
+
+/* the resize grip only makes sense on a pointer device */
+@media (hover: none) { .cal-scroll { resize: none; } }

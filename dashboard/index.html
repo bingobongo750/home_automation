@@ -344,6 +344,14 @@
             <button class="nav-btn" id="cal-next" aria-label="Next">›</button>
           </div>
           <h3 class="cal-title" id="cal-title"></h3>
+          <!-- Zoom: scales the hour height. Persisted, along with the viewport
+               height you get by dragging the grid's bottom edge. -->
+          <div class="cal-zoom" role="group" aria-label="Calendar zoom">
+            <button class="nav-btn" id="cal-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+            <span class="cal-zoom-label" id="cal-zoom-label">100%</span>
+            <button class="nav-btn" id="cal-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+            <button class="nav-btn cal-zoom-reset" id="cal-zoom-reset" title="Reset size">reset</button>
+          </div>
           <button class="add-btn" id="event-add-btn" title="Add event" aria-label="Add event">+</button>
         </div>
         <div class="calendar" id="calendar"></div>

@@ -2078,7 +2078,78 @@ viewButtons.forEach((btn) => btn.addEventListener("click", () => showView(btn.da
    as continuation chips across month cells; timed multi-day events clip into
    each day column. Tasks add/edit through a small inline row behind the +. */
 
-const CAL_HOUR_PX = 44;   // px per hour — keep in sync with .cal-col/.cal-hours in styles.css
+/* Calendar zoom. The hour height used to be 44 here AND in three places in
+   styles.css behind a "keep in sync" comment. It is now one CSS custom
+   property that both sides read, so there is nothing left to keep in sync.
+
+   Both the zoom level and the viewport height persist: a calendar you have
+   sized to your screen should still be that size tomorrow. */
+const CAL_ZOOM_KEY = "hub-cal-hour-px";
+const CAL_VIEWPORT_KEY = "hub-cal-viewport-px";
+const CAL_HOUR_MIN = 28;      // below this, event labels stop fitting
+const CAL_HOUR_MAX = 160;
+const CAL_HOUR_DEFAULT = 56;  // was 44 — a roomier default, as asked
+
+function calHourPx() {
+  const v = parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue("--cal-hour-px"));
+  return Number.isFinite(v) && v > 0 ? v : CAL_HOUR_DEFAULT;
+}
+
+function setCalHourPx(px, { redraw = true } = {}) {
+  const clamped = Math.round(Math.min(Math.max(px, CAL_HOUR_MIN), CAL_HOUR_MAX));
+  document.documentElement.style.setProperty("--cal-hour-px", clamped);
+  localStorage.setItem(CAL_ZOOM_KEY, String(clamped));
+  const label = document.getElementById("cal-zoom-label");
+  if (label) label.textContent = `${Math.round((clamped / CAL_HOUR_DEFAULT) * 100)}%`;
+  // Event blocks are positioned in px, so they have to be laid out again.
+  if (redraw && typeof renderCalendar === "function") renderCalendar();
+}
+
+function restoreCalendarSizing() {
+  const saved = parseFloat(localStorage.getItem(CAL_ZOOM_KEY));
+  setCalHourPx(Number.isFinite(saved) ? saved : CAL_HOUR_DEFAULT, { redraw: false });
+  const savedVp = parseFloat(localStorage.getItem(CAL_VIEWPORT_KEY));
+  if (Number.isFinite(savedVp)) {
+    document.documentElement.style.setProperty("--cal-viewport-px", `${savedVp}px`);
+  }
+}
+restoreCalendarSizing();
+
+/* Zoom controls, plus persistence for the drag-resized viewport. Wired on
+   DOMContentLoaded-equivalent (this script runs at the end of body). */
+function wireCalendarSizing() {
+  const step = (factor) => setCalHourPx(calHourPx() * factor);
+  document.getElementById("cal-zoom-in").addEventListener("click", () => step(1.25));
+  document.getElementById("cal-zoom-out").addEventListener("click", () => step(0.8));
+  document.getElementById("cal-zoom-reset").addEventListener("click", () => {
+    setCalHourPx(CAL_HOUR_DEFAULT);
+    localStorage.removeItem(CAL_VIEWPORT_KEY);
+    document.documentElement.style.removeProperty("--cal-viewport-px");
+  });
+
+}
+
+/* The grid's bottom edge is CSS-resizable; remember wherever it is left.
+   ResizeObserver rather than a drag handler because the browser performs the
+   resize, not us. .cal-scroll is rebuilt on every render, so this re-attaches
+   — guarded by a flag so a re-render does not stack observers. */
+let _calResizeSaveTimer = null;
+function observeCalendarResize() {
+  const scroll = document.querySelector(".cal-scroll");
+  if (!scroll || !("ResizeObserver" in window) || scroll.dataset.resizeObserved) return;
+  scroll.dataset.resizeObserved = "1";
+  new ResizeObserver((entries) => {
+    const h = Math.round(entries[0].contentRect.height);
+    if (h < 120) return;                     // ignore collapse/teardown noise
+    clearTimeout(_calResizeSaveTimer);       // one write per drag, not per frame
+    _calResizeSaveTimer = setTimeout(() => {
+      localStorage.setItem(CAL_VIEWPORT_KEY, String(h));
+      document.documentElement.style.setProperty("--cal-viewport-px", `${h}px`);
+    }, 400);
+  }).observe(scroll);
+}
+wireCalendarSizing();
 const CAL_SNAP_MIN = 15;  // drag-to-create snaps to quarter hours
 const CATEGORIES = ["home", "work", "personal", "health", "social"]; // keep in sync with app/planner.py
 
@@ -2276,8 +2347,8 @@ function calBlock(item, dayStart) {
   el.type = "button";
   el.className = "cal-event" + (ev.category ? ` cat-${ev.category}` : "")
     + (ev.source === "caldav" ? " cal-imported" : "");
-  el.style.top = `${((top - dayStart) / 3600) * CAL_HOUR_PX + 1}px`;
-  el.style.height = `${Math.max(((bottom - top) / 3600) * CAL_HOUR_PX - 2, 19)}px`;
+  el.style.top = `${((top - dayStart) / 3600) * calHourPx() + 1}px`;
+  el.style.height = `${Math.max(((bottom - top) / 3600) * calHourPx() - 2, 19)}px`;
   el.style.left = `${(lane / laneCount) * 100}%`;
   el.style.width = `calc(${(100 / laneCount).toFixed(3)}% - 3px)`;
   const title = document.createElement("span");
@@ -2406,7 +2477,7 @@ function renderTimeGrid(nDays) {
   for (let h = 1; h < 24; h++) {
     const label = document.createElement("span");
     label.className = "cal-hour-label";
-    label.style.top = `${h * CAL_HOUR_PX}px`;
+    label.style.top = `${h * calHourPx()}px`;
     label.textContent = `${pad2(h)}:00`;
     hours.appendChild(label);
   }
@@ -2425,15 +2496,16 @@ function renderTimeGrid(nDays) {
     if (now >= dayStart && now < dayStart + 86400) {
       const line = document.createElement("div");
       line.className = "cal-now";
-      line.style.top = `${((now - dayStart) / 3600) * CAL_HOUR_PX}px`;
+      line.style.top = `${((now - dayStart) / 3600) * calHourPx()}px`;
       col.appendChild(line);
     }
     col.addEventListener("pointerdown", onGridPointerDown);
     scroll.appendChild(col);
   }
   calendarEl.appendChild(scroll);
-  scroll.scrollTop = calScrollTop !== null ? calScrollTop : 7.5 * CAL_HOUR_PX;
+  scroll.scrollTop = calScrollTop !== null ? calScrollTop : 7.5 * calHourPx();
   scroll.addEventListener("scroll", () => { calScrollTop = scroll.scrollTop; });
+  observeCalendarResize();   // .cal-scroll is rebuilt each render
 }
 
 function renderMonth() {
@@ -2538,7 +2610,7 @@ function onMonthPointerDown(e) {
 
 function gridYToMin(col, clientY) {
   const rect = col.getBoundingClientRect();
-  const min = ((clientY - rect.top) / CAL_HOUR_PX) * 60;
+  const min = ((clientY - rect.top) / calHourPx()) * 60;
   return Math.max(0, Math.min(1440, Math.round(min / CAL_SNAP_MIN) * CAL_SNAP_MIN));
 }
 
@@ -2571,8 +2643,8 @@ function renderDragGhost(startTs, endTs) {
     if (bottom <= top) return;
     const g = document.createElement("div");
     g.className = "cal-ghost";
-    g.style.top = `${((top - dayStart) / 3600) * CAL_HOUR_PX}px`;
-    g.style.height = `${Math.max(((bottom - top) / 3600) * CAL_HOUR_PX, 4)}px`;
+    g.style.top = `${((top - dayStart) / 3600) * calHourPx()}px`;
+    g.style.height = `${Math.max(((bottom - top) / 3600) * calHourPx(), 4)}px`;
     c.appendChild(g);
   });
 }
