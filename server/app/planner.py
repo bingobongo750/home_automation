@@ -56,7 +56,11 @@ CREATE TABLE IF NOT EXISTS events (
     created_at   REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_start ON events (start_ts);
-CREATE INDEX IF NOT EXISTS idx_events_source ON events (source);
+-- NOTE: no index on `source` here. On an existing database CREATE TABLE IF NOT
+-- EXISTS is a no-op, so the column does not exist yet at this point — the
+-- ALTER TABLE that adds it runs below. Indexing it here crashes every start
+-- with "no such column: source" on exactly the databases that have data in
+-- them. The index is created after the migration instead.
 
 CREATE TABLE IF NOT EXISTS tasks (
     id           INTEGER PRIMARY KEY,
@@ -107,6 +111,8 @@ def init_db() -> None:
             # Everything that predates the CalDAV import is yours, by
             # definition — nothing else could have written it.
             conn.execute("ALTER TABLE events ADD COLUMN source TEXT NOT NULL DEFAULT 'local'")
+        # After the migration, never inside SCHEMA — see the note there.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_events_source ON events (source)")
         if "all_day" not in cols:
             conn.execute("ALTER TABLE events ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0")
             # grandfather the pre-flag convention: a midnight start with no
