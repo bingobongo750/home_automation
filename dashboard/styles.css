@@ -1880,3 +1880,26 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   font-weight: 600;
   color: var(--ink);
 }
+
+/* Dragged-span statistics. Sits under the chart in the detail overlay — unlike
+   the hover tooltip a selection persists after the pointer leaves, so it needs
+   a fixed home rather than a floating one. */
+.chart-selection[hidden] { display: none; } /* flex would win over [hidden] */
+.chart-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 22px 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--copper-dim);
+  border-radius: 6px;
+  background: rgba(210, 148, 85, 0.06);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.chart-selection .tt-value { color: var(--ink); font-size: 13px; font-weight: 600; }
+
+/* the chart is a drag surface now, so say so and stop text selection fighting it */
+.chart svg { cursor: crosshair; user-select: none; -webkit-user-select: none; }

@@ -470,6 +470,13 @@ keep this list in sync when endpoints change:
   either mode since the auto job never touches it. There is **no effect control** —
   the Shelly bulb has no effect engine (numbered effects were a WLED feature, dropped
   with the rest of that plan).
+- **Drag across any expanded chart** to select a time span and get its statistics
+  (average headlined, plus min/max, the span, its duration and the sample count) in a
+  readout under the chart. The crosshair already answers "what was it at this moment";
+  this answers "what was it across this stretch", which otherwise means eyeballing a
+  line. Selection is horizontal only — the question is always about a time range, never
+  a value range — and clears on a plain click, a range/metric change, or closing the
+  overlay, since a selection belongs to the chart that produced it.
 - Each widget expands on click into an **overlay dialog** (detail view: range-scoped chart,
   min/max/avg stats, "typical now" 7d-avg-by-time-of-day) rather than expanding in place —
   in-place expansion was rejected because it reflowed the grid out from under the cursor.

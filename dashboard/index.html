@@ -506,6 +506,10 @@
       <button class="detail-close" id="detail-close" aria-label="Close">×</button>
     </header>
     <div class="detail-body" id="detail-body"></div>
+    <!-- Statistics for a dragged span on the chart above. Lives in the overlay
+         rather than floating like the tooltip: a selection persists after the
+         pointer leaves, so it needs a stable place to sit. -->
+    <p class="chart-selection" id="chart-selection" hidden></p>
   </div>
 </div>
 

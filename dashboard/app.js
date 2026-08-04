@@ -807,6 +807,8 @@ function openDetail(widget) {
 
 function closeDetail() {
   if (!openWidget) return;
+  const sel = document.getElementById("chart-selection");
+  if (sel) sel.hidden = true;
   openWidget._detail.hidden = true;
   openWidget.appendChild(openWidget._detail);
   overlayEl.hidden = true;
@@ -1479,6 +1481,10 @@ const tooltip = document.getElementById("chart-tooltip");
 
 function drawChart(container, points, opts) {
   container.textContent = "";
+  // A selection belongs to the chart that produced it — switching range or
+  // metric must not leave last chart's statistics sitting underneath.
+  const priorSelection = document.getElementById("chart-selection");
+  if (priorSelection) priorSelection.hidden = true;
   if (!points || points.length < 2) {
     const empty = document.createElement("div");
     empty.className = "chart-empty";
@@ -1632,7 +1638,87 @@ function drawChart(container, points, opts) {
     return best;
   };
 
+  /* Drag across the chart to select a span and get its statistics. The chart
+     already answers "what was it at this moment" via the crosshair; this
+     answers "what was it across this stretch", which otherwise means eyeballing
+     a line. Selection is horizontal only — the question is always about a time
+     range, never a value range. */
+  const selRect = el("rect", { x: 0, y: pad.top, width: 0, height: ih,
+                               fill: opts.color, opacity: 0.14 });
+  const selEdges = [0, 1].map(() =>
+    el("line", { x1: 0, y1: pad.top, x2: 0, y2: pad.top + ih,
+                 stroke: opts.color, "stroke-width": 1, opacity: 0 }));
+  const readout = document.getElementById("chart-selection");
+
+  let dragFrom = null;   // timestamp where the drag started
+  let dragging = false;
+
+  const tsAt = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const raw = xMin + ((clientX - rect.left) / rect.width * w - pad.left) / iw * xSpan;
+    return Math.min(Math.max(raw, xMin), xMax);   // clamp to the plotted range
+  };
+
+  function clearSelection() {
+    selRect.setAttribute("width", 0);
+    selEdges.forEach((l) => l.setAttribute("opacity", 0));
+    if (readout) readout.hidden = true;
+  }
+
+  function paintSelection(a, b) {
+    const [lo, hi] = a <= b ? [a, b] : [b, a];
+    const x1 = X(lo), x2 = X(hi);
+    selRect.setAttribute("x", x1);
+    selRect.setAttribute("width", Math.max(x2 - x1, 0));
+    selEdges[0].setAttribute("x1", x1); selEdges[0].setAttribute("x2", x1);
+    selEdges[1].setAttribute("x1", x2); selEdges[1].setAttribute("x2", x2);
+    selEdges.forEach((l) => l.setAttribute("opacity", 0.9));
+
+    const inside = points.filter((p) => p.ts >= lo && p.ts <= hi);
+    if (!readout) return;
+    // Below two samples an "average" is just the sample, which is misleading
+    // dressed up as a statistic.
+    if (inside.length < 2) {
+      readout.hidden = false;
+      readout.textContent = "Drag across at least two points";
+      return;
+    }
+    const vals = inside.map((p) => p.value);
+    const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+    const mins = Math.round((hi - lo) / 60);
+    const dur = mins >= 120 ? `${(mins / 60).toFixed(1)} h` : `${mins} min`;
+    readout.hidden = false;
+    readout.textContent = "";
+    const strong = document.createElement("span");
+    strong.className = "tt-value";
+    strong.textContent = `avg ${avg.toFixed(opts.decimals)} ${opts.unit}`;
+    readout.append(
+      strong,
+      document.createTextNode(
+        `min ${Math.min(...vals).toFixed(opts.decimals)} · ` +
+        `max ${Math.max(...vals).toFixed(opts.decimals)} · ` +
+        `${axisTime(lo, xSpan)}–${axisTime(hi, xSpan)} · ${dur} · ${inside.length} pts`),
+    );
+  }
+
+  svg.addEventListener("pointerdown", (ev) => {
+    dragFrom = tsAt(ev.clientX);
+    dragging = true;
+    svg.setPointerCapture(ev.pointerId);
+    clearSelection();
+  });
+
+  svg.addEventListener("pointerup", (ev) => {
+    if (!dragging) return;
+    dragging = false;
+    try { svg.releasePointerCapture(ev.pointerId); } catch { /* already gone */ }
+    // A click with no drag clears rather than selecting a zero-width span.
+    if (Math.abs(tsAt(ev.clientX) - dragFrom) < xSpan * 0.005) clearSelection();
+    dragFrom = null;
+  });
+
   svg.addEventListener("pointermove", (ev) => {
+    if (dragging && dragFrom !== null) paintSelection(dragFrom, tsAt(ev.clientX));
     const rect = svg.getBoundingClientRect();
     const ts = xMin + ((ev.clientX - rect.left) / rect.width * w - pad.left) / iw * xSpan;
     const nearest = nearestOf(points, ts);
