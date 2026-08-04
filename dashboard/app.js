@@ -1378,7 +1378,9 @@ async function loadDetail(widget) {
       setStat(widget, "avg_7d_w", stats.avg_7d_w, "W");
     } else if (kind === "nights") {
       // Its own range/metric buttons drive it (see loadNights); the generic
-      // range machinery does not apply.
+      // range machinery does not apply. Always reopen on the list, never on
+      // whichever night happened to be open last time.
+      showNightsList();
       renderNights();
     } else if (kind === "motion") {
       const data = await getJSON(`/api/motion/events?range=${range}`);
@@ -1802,46 +1804,62 @@ function renderNights() {
     );
 
     li.append(date, vals);
-    const open = () => openNightDialog(n.night);
+    const open = () => openNightDetail(n.night);
     li.addEventListener("click", open);
     li.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
     list.appendChild(li);
   }
 }
 
-const nightDialog = document.getElementById("night-dialog");
+/* Drill down inside the widget overlay rather than opening a second modal on
+   top of it — the old dialog rendered underneath and had to be closed before
+   the night could be read. */
 
-async function openNightDialog(night) {
+const nightsListPane = document.getElementById("nights-list-pane");
+const nightsDetailPane = document.getElementById("nights-detail-pane");
+let nightDetailNight = null;
+
+function showNightsList() {
+  nightsDetailPane.hidden = true;
+  nightsListPane.hidden = false;
+  resetNightDelete();
+  nightDetailNight = null;
+}
+
+async function openNightDetail(night) {
   let data;
   try {
     data = await getJSON(`/api/nights/${encodeURIComponent(night)}`);
   } catch {
     return;
   }
-  nightDialogNight = data.night;
+  nightDetailNight = data.night;
   resetNightDelete();
-  document.getElementById("night-dialog-title").textContent = `Night of ${data.night}`;
+
+  document.getElementById("night-detail-title").textContent = `Night of ${data.night}`;
   const hours = ((data.to - data.from) / 3600).toFixed(1);
-  document.getElementById("night-dialog-window").textContent =
+  document.getElementById("night-detail-window").textContent =
     `Sleeping ${axisTime(data.from, 0)} → ${axisTime(data.to, 0)} · ${hours} h`;
 
-  const stats = document.getElementById("night-dialog-stats");
+  const stats = document.getElementById("night-detail-stats");
   stats.textContent = "";
-  const range = (st) => (st && st.min !== null ? `min ${st.min} · max ${st.max}` : null);
+  const range = (st) => (st && st.min !== null && st.min !== undefined
+    ? `min ${st.min} · max ${st.max}` : null);
   stats.append(
     summaryStat("Temp avg", data.temp && data.temp.avg, "°C", range(data.temp), false),
     summaryStat("Humidity avg", data.hum && data.hum.avg, "%RH", range(data.hum), false),
   );
   if (data.co2 && data.co2.avg !== null && data.co2.avg !== undefined) {
     stats.append(summaryStat("CO₂ avg", data.co2.avg, "ppm",
-      data.co2.start === null ? null : `${data.co2.start} → ${data.co2.end} ppm`,
+      data.co2.start === null || data.co2.start === undefined
+        ? null : `${data.co2.start} → ${data.co2.end} ppm`,
       data.co2.rose_significantly));
   }
   const got = (data.motion && data.motion.count) || 0;
   stats.append(summaryStat("Got up", got, got === 1 ? "time" : "times",
     got === 0 ? "slept through" : null, false));
 
-  const extra = document.getElementById("night-dialog-extra");
+  const extra = document.getElementById("night-detail-extra");
   extra.textContent = "";
   const times = (data.motion && data.motion.events) || [];
   if (times.length) {
@@ -1850,17 +1868,19 @@ async function openNightDialog(night) {
     p.textContent = "Up at " + times.map((t) => axisTime(t, 0)).join(", ");
     extra.appendChild(p);
   }
-  nightDialog.hidden = false;
+
+  nightsListPane.hidden = true;
+  nightsDetailPane.hidden = false;
 }
 
 /* Delete, behind an inline confirm rather than a browser confirm() so it
    matches the rest of the board. Two-step because it is irreversible. */
-let nightDialogNight = null;
-
 function resetNightDelete() {
   document.getElementById("night-delete").hidden = false;
   document.getElementById("night-delete-confirm").hidden = true;
 }
+
+document.getElementById("nights-back").addEventListener("click", showNightsList);
 
 document.getElementById("night-delete").addEventListener("click", () => {
   document.getElementById("night-delete").hidden = true;
@@ -1868,23 +1888,14 @@ document.getElementById("night-delete").addEventListener("click", () => {
 });
 document.getElementById("night-delete-no").addEventListener("click", resetNightDelete);
 document.getElementById("night-delete-yes").addEventListener("click", async () => {
-  if (!nightDialogNight) return;
+  if (!nightDetailNight) return;
   try {
-    await fetch(`/api/nights/${encodeURIComponent(nightDialogNight)}`, { method: "DELETE" });
+    await fetch(`/api/nights/${encodeURIComponent(nightDetailNight)}`, { method: "DELETE" });
   } catch {
     return;
   }
-  nightDialog.hidden = true;
-  resetNightDelete();
+  showNightsList();
   loadNights();   // averages and anomaly flags shift once a junk night is gone
-});
-
-document.getElementById("night-dialog-close").addEventListener("click", () => {
-  nightDialog.hidden = true;
-  resetNightDelete();
-});
-nightDialog.addEventListener("click", (e) => {
-  if (e.target === nightDialog) { nightDialog.hidden = true; resetNightDelete(); }
 });
 
 document.querySelectorAll("[data-nrange]").forEach((btn) => {

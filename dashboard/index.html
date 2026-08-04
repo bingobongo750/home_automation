@@ -272,50 +272,52 @@
         <p class="metric-value"><span class="value" id="nights-count">—</span><span class="unit">recorded</span></p>
         <p class="card-note" id="nights-note">Sleeping windows with room conditions.</p>
         <div class="widget-detail" hidden>
-          <div class="nights-range" role="group" aria-label="Night history range">
-            <button class="range-btn active" data-nrange="7d">7d</button>
-            <button class="range-btn" data-nrange="30d">30d</button>
-            <button class="range-btn" data-nrange="60d">60d</button>
+          <!-- Two panes inside the ONE widget overlay: the list, and a single
+               night. A night used to open its own modal on top of this one,
+               which rendered underneath and had to be closed to be read.
+               Drilling down in place avoids stacking dialogs at all. -->
+          <div id="nights-list-pane">
+            <div class="nights-range" role="group" aria-label="Night history range">
+              <button class="range-btn active" data-nrange="7d">7d</button>
+              <button class="range-btn" data-nrange="30d">30d</button>
+              <button class="range-btn" data-nrange="60d">60d</button>
+            </div>
+            <div class="nights-metric-switch" role="group" aria-label="Metric">
+              <button class="range-btn active" data-nmetric="temp">Temp</button>
+              <button class="range-btn" data-nmetric="hum">Humidity</button>
+              <button class="range-btn" data-nmetric="co2">CO₂</button>
+              <button class="range-btn" data-nmetric="motion">Got up</button>
+            </div>
+            <div class="chart chart-tall" id="nights-chart"></div>
+            <dl class="stat-row" id="nights-stats"></dl>
+            <p class="card-note nights-hint">Values more than 2 SD from this window's own mean are flagged. Click a night for its full summary.</p>
+            <ol class="nights-list" id="nights-list">
+              <li class="log-empty">No nights recorded yet.</li>
+            </ol>
           </div>
-          <div class="nights-metric-switch" role="group" aria-label="Metric">
-            <button class="range-btn active" data-nmetric="temp">Temp</button>
-            <button class="range-btn" data-nmetric="hum">Humidity</button>
-            <button class="range-btn" data-nmetric="co2">CO₂</button>
-            <button class="range-btn" data-nmetric="motion">Got up</button>
+
+          <div id="nights-detail-pane" hidden>
+            <button class="nights-back" id="nights-back">← All nights</button>
+            <h4 class="nights-detail-title" id="night-detail-title">Night</h4>
+            <p class="summary-window" id="night-detail-window"></p>
+            <dl class="stat-row" id="night-detail-stats"></dl>
+            <div id="night-detail-extra"></div>
+            <!-- A stray Sleeping toggle records a junk few-minute "night" that
+                 would otherwise drag the mean the anomaly flags use. -->
+            <div class="night-dialog-actions">
+              <button class="night-delete" id="night-delete">Delete this night</button>
+              <span class="night-delete-confirm" id="night-delete-confirm" hidden>
+                Delete permanently?
+                <button class="night-delete danger" id="night-delete-yes">Yes, delete</button>
+                <button class="night-delete" id="night-delete-no">Cancel</button>
+              </span>
+            </div>
           </div>
-          <div class="chart chart-tall" id="nights-chart"></div>
-          <dl class="stat-row" id="nights-stats"></dl>
-          <p class="card-note nights-hint">Values more than 2 SD from this window's own mean are flagged. Click a night for its full summary.</p>
-          <ol class="nights-list" id="nights-list">
-            <li class="log-empty">No nights recorded yet.</li>
-          </ol>
         </div>
       </article>
     </div>
   </section>
 
-  <!-- One night's stored summary, opened from the Nights list. -->
-  <div class="dialog-backdrop" id="night-dialog" hidden>
-    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="night-dialog-title">
-      <header class="dialog-head">
-        <h2 class="dialog-title" id="night-dialog-title">Night</h2>
-        <button class="dialog-close" id="night-dialog-close" aria-label="Close">×</button>
-      </header>
-      <p class="summary-window" id="night-dialog-window"></p>
-      <dl class="stat-row" id="night-dialog-stats"></dl>
-      <div id="night-dialog-extra"></div>
-      <!-- A stray Sleeping toggle records a junk few-minute "night" that would
-           otherwise skew the mean the anomaly flags are measured against. -->
-      <div class="night-dialog-actions">
-        <button class="night-delete" id="night-delete">Delete this night</button>
-        <span class="night-delete-confirm" id="night-delete-confirm" hidden>
-          Delete permanently?
-          <button class="night-delete danger" id="night-delete-yes">Yes, delete</button>
-          <button class="night-delete" id="night-delete-no">Cancel</button>
-        </span>
-      </div>
-    </div>
-  </div>
 
 </div><!-- /view-board -->
 
