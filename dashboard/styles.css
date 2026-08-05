@@ -266,6 +266,14 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   letter-spacing: 0.02em;
   color: var(--ink-2);
 }
+/* Which device a card's figures belong to, when the zone shows one card per
+   device (the Power zone). Quieter than the label it qualifies. */
+.card-label-sub {
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 6px;
+}
+.card-label-sub:empty { display: none; }
 
 .head-right { display: flex; align-items: center; gap: 8px; }
 

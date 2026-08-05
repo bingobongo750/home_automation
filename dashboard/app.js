@@ -320,7 +320,12 @@ function plugPairDOM(device) {
     </article>
     <article class="widget power-widget" data-widget="power" tabindex="0">
       <header class="card-head">
-        <h3 class="card-label">Power draw</h3>
+        <!-- The plug's name is part of the label because the Power zone shows
+             one of these per plug, side by side. Every figure in here — the
+             live watts, the 24h/7d averages, the 24h kWh, the chart and the
+             energy of a dragged selection — is scoped to this one device, but
+             two cards both titled "Power draw" gave no way to see that. -->
+        <h3 class="card-label">Power draw <span class="card-label-sub"></span></h3>
         <span class="head-right"><code class="wire-key">W</code><span class="expand-hint" aria-hidden="true">⤢</span></span>
       </header>
       <p class="metric-value"><span class="value">—</span><span class="unit">W</span></p>
@@ -348,6 +353,8 @@ function plugPairDOM(device) {
   const widget = pair.querySelector(".power-widget");
   widget.dataset.deviceId = device.id;
   widget.dataset.name = device.name;
+  // API data — set as text, never markup (same rule as the plug card above)
+  widget.querySelector(".card-label-sub").textContent = device.name;
   wireWidget(widget);
 
   const sw = pair.querySelector(".plug-switch");
