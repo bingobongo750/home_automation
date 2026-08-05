@@ -696,6 +696,20 @@ function lightCardDOM(device) {
   return card;
 }
 
+/* The one line under a lighting card. Ordered by what overrides what:
+   a scene beats auto, and the zone's own switch beats the auto loop — it is a
+   master gate, so a zone switched off is not "waiting" for anything and must
+   not show the shared controller status, which describes the zones that ARE
+   being driven. */
+function lightStatusText(device, isAuto, suppressedBy, lux) {
+  if (!isAuto) return "";
+  if (suppressedBy) return `Auto paused — ${suppressedBy} scene active.`;
+  if (!device.light.on) return "Switched off — auto lighting will not turn it on.";
+  if (device.auto && device.auto.detail) return `Auto — ${device.auto.detail}`;
+  // older backend, or the first tick has not run yet
+  return `Auto — following ambient light${lux ? ` (${Number(lux.value).toFixed(0)} lx)` : ""}.`;
+}
+
 function applyLightMode(card, mode) {
   const isAuto = mode === "auto";
   card.dataset.mode = mode;
@@ -782,16 +796,11 @@ function renderLighting(devices, latest) {
          to say so, otherwise auto mode just looks broken. device.auto.detail
          is that sentence; fall back to the raw lux if an older backend or a
          tick that hasn't run yet leaves it absent. */
-      status.textContent = !isAuto
-        ? ""
-        : suppressedBy
-          ? `Auto paused — ${suppressedBy} scene active.`
-          : device.auto && device.auto.detail
-            ? `Auto — ${device.auto.detail}`
-            : `Auto — following ambient light${lux ? ` (${Number(lux.value).toFixed(0)} lx)` : ""}.`;
+      status.textContent = lightStatusText(device, isAuto, suppressedBy, lux);
+      // Copper only when the loop is actually trying and cannot get there.
       status.classList.toggle(
         "light-status-capped",
-        Boolean(isAuto && !suppressedBy && device.auto
+        Boolean(isAuto && !suppressedBy && device.light.on && device.auto
                 && (device.auto.state === "too_bright" || device.auto.state === "at_max")));
     } else {
       color.disabled = true;

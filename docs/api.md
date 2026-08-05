@@ -54,9 +54,9 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
   `{"on": bool, "brightness": 0-255, "ct": 2700-6500, "color": [r, g, b]}`.
   Pushes a partial update to the zone and returns its resulting
   `{on, brightness, ct, color, color_mode}`. `400` on out-of-range values,
-  `502` if the zone is unreachable. Only meaningful in `manual` mode — in
-  `auto` mode the lighting job (see below) overwrites `on`/`brightness` on
-  its next tick.
+  `502` if the zone is unreachable. In `auto` mode the lighting job overwrites
+  `brightness` on its next tick, but **not `on`** — the switch is the user's
+  master gate (see below), so `{"on": false}` sticks in either mode.
 
   **`ct` vs `color` — two channels, one lit at a time.** The bulb has a
   dedicated white channel plus separate R/G/B dies. `ct` (kelvin) drives the
@@ -93,19 +93,30 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
   room at `target_lux`, capped at `LIGHTING_AUTO_BRIGHTNESS`. One controller
   drives every `auto` zone, since there is one sensor and one room.
 
+  **The job sets `brightness` only — never `on`.** The zone's on/off switch is a
+  master gate the user owns: auto drives only the zones that are switched on,
+  and a zone switched off is left off. A switched-on zone therefore bottoms out
+  at the Shelly's 1 % floor rather than going dark, since 0 is not sendable.
+  When no `auto` zone is on, the loop holds its integrator rather than winding
+  up against a room it cannot affect.
+
   `GET /devices` adds an `auto` object to each `auto` bulb row so the outcome is
   visible rather than guessed:
 
   ```json
-  "auto": {"state": "too_bright", "detail": "Room already brighter than target (315 lx vs 5 lx) — zone off.",
+  "auto": {"state": "too_bright", "detail": "Room already brighter than target (315 lx vs 5 lx) — at minimum.",
            "target_lux": 5.0, "measured_lux": 315.0, "brightness": 0}
   ```
 
   `state` is one of `holding` (at target), `converging`, `too_bright` (ambient
-  alone exceeds the target — bulbs already off, nothing more to give), `at_max`
-  (at the brightness ceiling and still short), `off` (`target_lux` is 0),
-  `no_reading`, `stale` (no lux for `LIGHTING_STALE_AFTER_S`). The two saturated
-  states are normal outcomes, not errors.
+  alone exceeds the target — brightness already at 0, nothing more to give),
+  `at_max` (at the brightness ceiling and still short), `off` (`target_lux` is
+  0), `no_reading`, `stale` (no lux for `LIGHTING_STALE_AFTER_S`), and
+  `zones_off`. The saturated states are normal outcomes, not errors.
+
+  `zones_off` is reported per zone whenever that zone's switch is off — the
+  controller is shared, so its own state describes the zones it is driving, and
+  claiming "converging" for a zone the user switched off would be wrong.
 
 ## Scenes (house modes)
 

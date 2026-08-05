@@ -14,6 +14,26 @@ room" and "our bulbs are working" are indistinguishable.
 So this is a closed loop with a setpoint: drive the MEASURED lux to
 `target_lux` by adjusting brightness, and say plainly when it cannot.
 
+WHO OWNS WHAT: AUTO OWNS BRIGHTNESS, THE USER OWNS ON/OFF
+---------------------------------------------------------
+This module returns a brightness and nothing else. It has no opinion about
+whether a lamp is on, and app/lighting.py never sends the `on` field.
+
+The zone's on/off switch is the user deciding *which lamps may light at all* —
+a master gate, not a value for the loop to fight over. It used to be exactly
+that fight: the job pushed `on=True` every tick, so switching a zone off while
+it was in auto mode simply undid itself seconds later. Off has to win.
+
+The consequence to be aware of: when the loop wants zero light from a zone the
+user has left ON, it commands brightness 0, and the transport floors that to
+the Shelly's 1 % minimum (the bulb rejects 0 — "off" is only expressible
+through `on`, which is no longer ours to send). So a switched-on zone bottoms
+out at a faint glow rather than going dark. That is the honest price of the
+rule, and it is nearly always invisible: the loop only wants zero light when
+ambient already exceeds the target, i.e. when the room is bright enough that
+1 % cannot be seen. If a lamp should be truly dark, switch it off — which is
+precisely the control this change hands back.
+
 WHY INTEGRAL-ONLY, NOT PID
 --------------------------
 `brightness -> lux at the sensor` has an unknown gain: it depends on the bulb,
@@ -89,17 +109,21 @@ _RESET_ERROR_FACTOR = 4.0
 # error, and the dashboard says so rather than silently doing nothing.
 HOLDING = "holding"          # inside the deadband: at target, nothing to do
 CONVERGING = "converging"    # moving toward the target
-TOO_BRIGHT = "too_bright"    # ambient alone exceeds the target; bulbs already off
+TOO_BRIGHT = "too_bright"    # ambient alone exceeds the target; brightness at 0
 AT_MAX = "at_max"            # at the brightness ceiling and still short of target
 OFF_BY_SETTING = "off"       # target_lux <= 0: auto mode is switched off
 NO_READING = "no_reading"    # no lux sample has ever arrived
 STALE = "stale"              # lux samples stopped arriving; loop is blind
+# Set by app/lighting.py, not reachable from correct(): every auto zone is
+# switched off, so there is nothing for the loop to drive. It holds rather than
+# integrating, or it would wind up to full while blind and then blast the room
+# the moment a switch went back on.
+ZONES_OFF = "zones_off"
 
 
 @dataclass(frozen=True)
 class Correction:
     brightness: int   # 0-255, hub scale, what to command
-    on: bool          # False iff brightness is 0 — "off" is never brightness 0
     state: str        # one of the constants above
     error: float      # target - measured, in lx (0.0 when there is no reading)
     # Carried state — feed both back into the next call. See point 3 in the
@@ -137,7 +161,7 @@ def correct(*, measured_lux, target_lux, brightness, max_brightness,
     # A zero/negative target means "auto mode should not light the room" —
     # preserves the old ramp's `lux_off <= 0` escape hatch.
     if target_lux <= 0:
-        return Correction(0, False, OFF_BY_SETTING, 0.0, step_scale, 0)
+        return Correction(brightness, OFF_BY_SETTING, 0.0, step_scale, 0)
 
     if measured_lux is None:
         # Never had a reading: light the room rather than leave someone in the
@@ -145,20 +169,19 @@ def correct(*, measured_lux, target_lux, brightness, max_brightness,
         # than a dark one on sensor loss") and it only applies when we have no
         # idea at all — going to full brightness on a reading that merely went
         # stale could switch the lamp on in broad daylight.
-        return Correction(max_brightness, max_brightness > 0, NO_READING, 0.0,
-                          step_scale, 0)
+        return Correction(max_brightness, NO_READING, 0.0, step_scale, 0)
 
     if reading_stale:
         # Blind for now: hold what we have. Correcting on a measurement taken
         # before our last change would double-count it and overshoot.
-        return Correction(brightness, brightness > 0, STALE, 0.0, step_scale, last_sign)
+        return Correction(brightness, STALE, 0.0, step_scale, last_sign)
 
     error = target_lux - measured_lux          # +ve = too dark, need more light
 
     if abs(error) <= deadband_lux:
         # Converged. Keep the scale we converged at — the sign logic will open
         # it back up if the room genuinely changes.
-        return Correction(brightness, brightness > 0, HOLDING, error, step_scale, 0)
+        return Correction(brightness, HOLDING, error, step_scale, 0)
 
     sign = 1 if error > 0 else -1
     if last_sign != 0 and sign != last_sign:
@@ -179,10 +202,9 @@ def correct(*, measured_lux, target_lux, brightness, max_brightness,
     if new_brightness == brightness:
         # Clamped: we are asking for light we cannot add or remove.
         state = AT_MAX if error > 0 else TOO_BRIGHT
-        return Correction(brightness, brightness > 0, state, error, step_scale, sign)
+        return Correction(brightness, state, error, step_scale, sign)
 
-    return Correction(new_brightness, new_brightness > 0, CONVERGING, error,
-                      step_scale, sign)
+    return Correction(new_brightness, CONVERGING, error, step_scale, sign)
 
 
 def describe(state, *, target_lux, measured_lux=None):
@@ -190,12 +212,16 @@ def describe(state, *, target_lux, measured_lux=None):
     lux = "—" if measured_lux is None else f"{measured_lux:.0f} lx"
     if state == OFF_BY_SETTING:
         return "Auto lighting off (target set to 0 lx)."
+    if state == ZONES_OFF:
+        return "Switched off — auto lighting will not turn it on."
     if state == NO_READING:
         return "No light reading yet — holding full brightness."
     if state == STALE:
         return "Waiting for a fresh light reading."
     if state == TOO_BRIGHT:
-        return f"Room already brighter than target ({lux} vs {target_lux:.0f} lx) — zone off."
+        # "at minimum", not "off": the loop no longer switches zones off, it
+        # bottoms their brightness out (see the ownership note above).
+        return f"Room already brighter than target ({lux} vs {target_lux:.0f} lx) — at minimum."
     if state == AT_MAX:
         return f"At maximum brightness, still below target ({lux} of {target_lux:.0f} lx)."
     if state == HOLDING:

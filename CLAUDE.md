@@ -138,6 +138,18 @@ data before it hits the database or API layer.
   settings dialog via `GET/PUT /api/settings/lighting`, seeded from
   `LIGHTING_TARGET_LUX` (default **5 lx**). Zones in `manual` mode are left alone; the
   dashboard drives those via `POST /api/devices/:id/state`.
+  - **Auto owns brightness; the user owns on/off.** The loop sends `brightness` and
+    **never `on`**, and each tick it reads every auto zone's switch and drives only the
+    ones that are ON. Two consequences: a switched-on zone bottoms out at the Shelly's
+    1 % floor rather than going dark (0 is not sendable — "off" only exists through
+    `on`), which is nearly always invisible since the loop only wants zero light when
+    ambient already beats the target; and when **no** auto zone is on the loop **holds
+    its integrator** rather than integrating against a room it cannot affect, or
+    flipping a switch back on would blast whatever it had wound up to. `target_lux` of
+    0 likewise means *hands off entirely*, not "dim everything to 1 %".
+    `GET /api/devices` reports `auto.state = "zones_off"` on a switched-off zone
+    instead of the shared controller state, which would otherwise claim it was
+    converging.
   - It **replaced an open-loop linear ramp** (full brightness at pitch dark fading to
     off at a `lux_off` cutoff). A ramp cannot hold a level because it never aims at
     one, and the mapping is circular: the BH1750 measures TOTAL illuminance, including
@@ -534,9 +546,12 @@ keep this list in sync when endpoints change:
   separate view only because neither is a device lane at all — don't take them as
   precedent for splitting device zones into tabs.
 - Each Lighting card's top-right switch is always the zone's physical on/off, and it
-  stays clickable in both modes — a user can switch a zone off even while it's in
-  `auto` (the lighting job may reassert brightness/on on its next tick, but a manual
-  on/off click is never blocked by mode). Mode (`manual`/`auto`) is one of the control
+  stays clickable in both modes. **It is a master gate and it beats the auto loop:**
+  the user decides which lamps may light at all, and a zone switched off stays off no
+  matter what auto mode wants. It used to be the opposite — the job pushed `on=True`
+  every tick, so switching a zone off while in `auto` undid itself seconds later. The
+  card says so per zone ("Switched off — auto lighting will not turn it on."), because
+  the backend's `auto` status describes the zones actually being driven. Mode (`manual`/`auto`) is one of the control
   rows alongside brightness/color. In `auto` mode only the brightness control
   goes read-only (the lighting job drives it from lux) but keeps displaying the live
   value every poll rather than freezing or disappearing; color stays editable in

@@ -40,7 +40,6 @@ class TestStates(unittest.TestCase):
         r = correct(measured_lux=0.0, brightness=20)
         self.assertEqual(r.state, lc.CONVERGING)
         self.assertGreater(r.brightness, 20)
-        self.assertTrue(r.on)
 
     def test_too_bright_lowers_brightness(self):
         r = correct(measured_lux=30.0, brightness=100)
@@ -59,7 +58,6 @@ class TestStates(unittest.TestCase):
     def test_never_goes_below_zero(self):
         r = correct(measured_lux=500.0, brightness=5)
         self.assertEqual(r.brightness, 0)
-        self.assertFalse(r.on)
 
     # --- the "sometimes it cannot" cases the user asked to be handled ---
     def test_room_already_too_bright_reports_saturation(self):
@@ -67,7 +65,6 @@ class TestStates(unittest.TestCase):
         r = correct(measured_lux=400.0, brightness=0)
         self.assertEqual(r.state, lc.TOO_BRIGHT)
         self.assertEqual(r.brightness, 0)
-        self.assertFalse(r.on)
         self.assertIn("brighter than target", lc.describe(r.state, target_lux=5.0,
                                                           measured_lux=400.0))
 
@@ -91,10 +88,12 @@ class TestStates(unittest.TestCase):
 
     # --- degenerate inputs ---
     def test_zero_target_disables(self):
+        """Reports 'off' and leaves brightness alone — app/lighting.py makes no
+        push at all in this state, because with the loop not owning `on`,
+        "disabled" has to mean hands off rather than 'dim everything to 1 %'."""
         r = correct(measured_lux=0.0, brightness=100, target_lux=0.0)
         self.assertEqual(r.state, lc.OFF_BY_SETTING)
-        self.assertEqual(r.brightness, 0)
-        self.assertFalse(r.on)
+        self.assertEqual(r.brightness, 100)
 
     def test_no_reading_lights_the_room(self):
         """Pre-existing product decision: better a lit room than a dark one."""
@@ -188,7 +187,6 @@ class TestConvergence(unittest.TestCase):
         history, result = run_loop(room, brightness=120)
         self.assertEqual(history[-1], 0)
         self.assertEqual(result.state, lc.TOO_BRIGHT)
-        self.assertFalse(result.on)
 
     def test_follows_a_sunset_without_oscillating(self):
         """Ambient falls from daylight to dark over the run: the loop should be

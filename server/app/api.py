@@ -6,8 +6,8 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from . import (caldav_sync, config, db, lighting, poller, presence, scenes,
-               serial_reader, shelly_bulb)
+from . import (caldav_sync, config, db, lighting, lighting_control, poller,
+               presence, scenes, serial_reader, shelly_bulb)
 from .mystrom import PlugError
 from .shelly_bulb import BulbError
 
@@ -197,7 +197,21 @@ def _attach_device_state(device: dict) -> dict:
         # the same snapshot on each row — carried per-row because that is
         # where the dashboard already looks.
         if device.get("mode") == "auto":
-            device["auto"] = lighting.status
+            light = device["light"]
+            if light is not None and not light.get("on"):
+                # One controller drives every auto zone, so `lighting.status`
+                # describes the zones it is ACTUALLY driving. A zone the user
+                # switched off is not one of them — the switch is a master gate
+                # — and reporting "converging" against it would be a plain lie.
+                device["auto"] = {
+                    **lighting.status,
+                    "state": lighting_control.ZONES_OFF,
+                    "detail": lighting_control.describe(
+                        lighting_control.ZONES_OFF,
+                        target_lux=lighting.status.get("target_lux", 0)),
+                }
+            else:
+                device["auto"] = lighting.status
     return device
 
 
