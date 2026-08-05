@@ -1916,6 +1916,62 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 .nights-metric-switch { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
 .nights-hint { margin-top: 10px; font-size: 11px; }
 
+/* Night detail: when you were up, and each stat's overnight curve.
+   Reuses the away card's .away-track / .away-axis so a timeline reads the same
+   wherever it appears. */
+.night-timeline { margin: 12px 0 6px; }
+.night-timeline .sub-caption { margin: 0 0 6px; }
+/* Unlike the away card's ticks, an awakening has a DURATION — the mark is a bar
+   whose width is how long you were up, with the 2px tick as its floor for a
+   brief stir. margin-left is dropped so a sized bar starts where it happened
+   rather than half a pixel earlier. */
+.night-up {
+  margin-left: 0;
+  border-radius: 2px;
+}
+#night-up-list { margin-top: 8px; }
+
+/* Stats that expand into their own chart. Only the ones that HAVE a curve —
+   "Got up" stays a plain tile, since drawing a line through discrete events
+   would invent data. */
+/* Padding on EVERY tile in the row, not just the clickable ones, so the plain
+   "Got up" tile still lines up with its neighbours. */
+.stat-row-clickable > div {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+.stat-row-clickable .stat-expandable {
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.stat-row-clickable .stat-expandable:hover,
+.stat-row-clickable .stat-expandable:focus-visible {
+  border-color: var(--copper-dim);
+  background: var(--surface-2);
+}
+.stat-row-clickable .stat-expandable.open {
+  border-color: var(--copper);
+  background: var(--copper-dim);
+}
+/* On the dt, not the tile: ::after on the tile would sit below the stat-sub
+   line instead of beside the label it belongs to. */
+.stat-row-clickable .stat-expandable dt::after {
+  content: "⌄";
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 5px;
+}
+.stat-row-clickable .stat-expandable.open dt::after {
+  content: "⌃";
+  color: var(--copper);
+}
+
+.night-metric { margin-top: 14px; }
+.night-metric[hidden] { display: none; }
+.night-metric .sub-caption { margin: 0 0 6px; }
+
 .night-dialog-actions { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hairline); }
 .night-delete {
   font-family: var(--mono);

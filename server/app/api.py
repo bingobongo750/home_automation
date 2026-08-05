@@ -6,7 +6,8 @@ import time
 
 from flask import Blueprint, jsonify, request
 
-from . import caldav_sync, db, lighting, poller, presence, scenes, serial_reader, shelly_bulb
+from . import (caldav_sync, config, db, lighting, poller, presence, scenes,
+               serial_reader, shelly_bulb)
 from .mystrom import PlugError
 from .shelly_bulb import BulbError
 
@@ -453,13 +454,57 @@ def nights_list():
                     "nights": _flag_night_anomalies(nights)})
 
 
+METRIC_SERIES = {"temp", "hum", "co2", "lux"}
+
+
 @api.get("/nights/<night>")
 def night_detail(night: str):
-    """One night's full stored summary."""
+    """One night's full stored summary, plus `awakenings` — when you got up.
+
+    The stored summary keeps only the start of each awakening (a list of bare
+    timestamps). `awakenings` re-derives them from the `readings` rows, which
+    are never pruned, so each one carries `start`/`end`/`samples` and the
+    dashboard can show how LONG you were up, not just that you were. Doing it
+    on read rather than widening the stored shape also means every night
+    already in the history gets this, not only the ones recorded from now on.
+
+    This is a detail view over raw data that is still there — the same thing
+    the widget dialogs do with /sensors/history — not a second report system.
+    The stored summary remains the single computed-at-the-transition headline.
+    """
     row = db.get_night_summary(night)
     if row is None:
         return jsonify({"error": "no summary for that night"}), 404
+    stamps = [e["ts"] for e in db.motion_events(row["from"], limit=5000, until=row["to"])]
+    row["awakenings"] = [
+        {"start": e["start"], "end": e["end"], "samples": e["samples"],
+         "duration_s": round(e["end"] - e["start"])}
+        for e in scenes.cluster_events(stamps, config.DISTURBANCE_COOLDOWN_S)
+    ]
     return jsonify(row)
+
+
+@api.get("/nights/<night>/series")
+def night_series(night: str):
+    """One metric's curve across a night's window, for the detail dialog's
+    expandable stats — "what did the temperature actually do over those 9.5 h".
+
+    The window comes from the stored night, not from the query string, so the
+    curve is always over exactly the span the summary's min/max/avg describe.
+    """
+    metric = request.args.get("metric", "temp")
+    if metric not in METRIC_SERIES:
+        return jsonify({"error": f"metric must be one of {sorted(METRIC_SERIES)}"}), 400
+    row = db.get_night_summary(night)
+    if row is None:
+        return jsonify({"error": "no summary for that night"}), 404
+    return jsonify({
+        "night": row["night"],
+        "metric": metric,
+        "from": row["from"],
+        "to": row["to"],
+        "points": db.metric_window_history(metric, row["from"], row["to"]),
+    })
 
 
 @api.delete("/nights/<night>")

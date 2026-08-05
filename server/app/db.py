@@ -482,6 +482,30 @@ def metric_history(metric: str, since: float, max_points: int = 300) -> list[dic
     return [{"ts": r["bucket_ts"], "value": round(r[key], 2)} for r in rows]
 
 
+def metric_window_history(metric: str, since: float, until: float,
+                          max_points: int = 240) -> list[dict]:
+    """Same as metric_history, but over a CLOSED window rather than "since X".
+
+    metric_history buckets against time.time(), which is right for a live
+    widget and wrong for a night that ended this morning: the bucket size
+    would be computed from a span that keeps growing all day, so the same
+    night would come back at a different resolution every time you opened it.
+    Here the span is fixed by the window itself.
+    """
+    span = max(until - since, 1.0)
+    bucket = max(span / max_points, 1.0)
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT CAST(ts / ? AS INTEGER) * ? AS bucket_ts,
+                      AVG(value) AS value, MAX(value) AS max_value
+               FROM readings WHERE metric = ? AND ts >= ? AND ts <= ?
+               GROUP BY bucket_ts ORDER BY bucket_ts""",
+            (bucket, bucket, metric, since, until),
+        ).fetchall()
+    key = "max_value" if metric == "motion" else "value"
+    return [{"ts": r["bucket_ts"], "value": round(r[key], 2)} for r in rows]
+
+
 def metric_stats(metric: str) -> dict:
     """Summary stats for a widget's expanded view: 24h min/max/avg + 7d avg."""
     now = time.time()

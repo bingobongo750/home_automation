@@ -152,6 +152,45 @@ backend restarts.
   transition like the sensor stats. Summaries stored before the planner
   existed have no `planner` key.
 
+## Nights (recorded Sleeping windows)
+
+Each Sleeping → Home transition stores its summary in `night_summaries`, keyed
+by the wake morning's local date. A night is bounded by the *scene*, not by a
+sensor, which is why these live here rather than under Sensors.
+
+- `GET /nights?range=30d` → `{range, nights: [...]}`, newest first. Each night
+  is `{night, from, to, ...summary}` plus `anomalies`: metrics more than 2 SD
+  from this window's own mean. Anomalies are measured against your own nights,
+  never population norms — a fixed threshold would flag every night in winter.
+  Awakenings use a plain threshold instead, since a high count means something
+  on its own.
+- `GET /nights/:date` → one night's full stored summary, plus **`awakenings`**:
+  `[{start, end, samples, duration_s}]`, one entry per time you got out of bed.
+
+  These are re-derived from the `readings` rows on every read, not taken from
+  the stored summary (which keeps only bare start timestamps). Two reasons:
+  `readings` is never pruned, so nights recorded before this existed get
+  durations too without a migration; and a PIR emits a row per cycle for as
+  long as it sees you, so the raw rows have to be clustered
+  (`DISTURBANCE_COOLDOWN_S`) or one trip to the bathroom reads as dozens of
+  awakenings. `samples` is the raw row count behind the event.
+- `GET /nights/:date/series?metric=temp` →
+  `{night, metric, from, to, points: [{ts, value}]}` — that metric's curve
+  across the night, for the dialog's expandable stats. `metric` is one of
+  `temp|hum|co2|lux`; anything else is a 400, **including `motion`**, which is
+  discrete events rather than a curve (the dialog's timeline is its
+  visualisation, and a line drawn through them would invent data).
+
+  The window comes from the stored night, not the query string, so the curve
+  always covers exactly the span the summary's min/max/avg describe. Bucketing
+  is fixed by that window rather than by `now()`, or the same night would come
+  back at a different resolution each time it was opened. Bucket labels are
+  floored to the bucket boundary, so the first point can sit up to one bucket
+  before `from`.
+- `DELETE /nights/:date` → `{deleted}`. Exists because a stray Sleeping toggle
+  records a junk few-minute "night" that would otherwise sit in the history
+  forever and drag the mean the anomaly flags are measured against.
+
 ## Presence
 
 Two iPhone Shortcuts drive these; see `docs/presence-design.md` for the design

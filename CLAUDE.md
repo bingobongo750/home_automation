@@ -486,7 +486,8 @@ keep this list in sync when endpoints change:
 - `GET /api/scenes/last-summary` — most recent Sleeping→Home overnight summary (null before the first); carries a `planner` section (today's events + overdue/high-priority tasks)
 - `GET /api/scenes/last-away-summary` — most recent Away→(Home|Sleeping) disturbance summary (null before the first)
 - `GET /api/nights?range=30d` — every recorded Sleeping window, newest first, each with its stored summary plus an `anomalies` list (metrics >2 SD from the window's own mean; awakenings use a plain threshold since a high count means something on its own)
-- `GET /api/nights/:date` — one night's full summary; `DELETE` removes it (a stray Sleeping toggle records a junk few-minute "night" that would otherwise drag the mean the anomaly flags are measured against)
+- `GET /api/nights/:date` — one night's full summary, plus `awakenings` (`start`/`end`/`samples`/`duration_s` per time you got up, re-derived from `readings` so nights recorded before it existed get it too); `DELETE` removes it (a stray Sleeping toggle records a junk few-minute "night" that would otherwise drag the mean the anomaly flags are measured against)
+- `GET /api/nights/:date/series?metric=temp` — that metric's curve across the night's stored window (`temp|hum|co2|lux`), for the dialog's expandable stats
 - `GET /api/presence` — presence state + whether a departure is waiting out its grace
 - `POST /api/presence/departed` / `POST /api/presence/arrived` — phone-driven presence (no body, so an iPhone Shortcut is one action); see `app/presence.py` and `docs/presence-design.md`
 - `GET /api/events?from=YYYY-MM-DD&range=7d` — calendar events in a date window, recurring ones expanded into occurrences
@@ -597,6 +598,24 @@ keep this list in sync when endpoints change:
   render red, and a night can be **deleted** from that dialog — a stray Sleeping toggle
   records a junk few-minute "night" that would otherwise drag the mean those flags are
   measured against.
+- **The per-night dialog answers "when did I get up", not just how often.** It leads with
+  a **timeline** — the sleep window as a track, one mark per awakening — reusing the away
+  card's `.away-track`/`.away-axis` language, for the same reason: *where* in the night
+  something happened is the first thing you want, and a list of timestamps cannot show it.
+  Each mark's **width is its duration** (with a 3px floor so a brief stir stays visible),
+  so a 20-minute trip at 3am reads differently from a momentary one. The times are also
+  listed as text underneath — ticks can overlap on a phone, and the list carries the
+  durations.
+  Below it, **each stat tile expands into that metric's actual curve across the night**
+  (`GET /api/nights/:date/series`), inline in the same dialog rather than stacking a
+  second overlay: click Temp avg and you get the temperature over those 9.5 h, with the
+  usual drag-to-select statistics. Clicking the open tile again collapses it.
+  **"Got up" is deliberately not expandable** — motion is discrete events, and a line
+  drawn through them would invent a curve that does not exist; the timeline *is* its
+  chart. That is also why `/series` rejects `metric=motion` with a 400.
+  `awakenings` is re-derived from `readings` on read rather than widened into the stored
+  summary: raw rows are never pruned, so every night already in the history gains
+  durations without a migration.
 - **Calendar sizing: one user-owned knob, one fixed constant.** These are two
   different questions and were wrong when conflated, so keep them distinct even
   though only one is adjustable now:

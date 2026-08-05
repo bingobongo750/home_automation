@@ -300,7 +300,29 @@
             <button class="nights-back" id="nights-back">← All nights</button>
             <h4 class="nights-detail-title" id="night-detail-title">Night</h4>
             <p class="summary-window" id="night-detail-window"></p>
-            <dl class="stat-row" id="night-detail-stats"></dl>
+
+            <!-- WHEN you got up, not just how often. Same track-and-tick
+                 language as the away card's disturbance timeline: where in the
+                 night something happened is the first thing you want, and a
+                 list of timestamps cannot show it. Each mark is one awakening,
+                 its width its duration, so a 20-minute stretch at 3am reads
+                 differently from a brief stir. -->
+            <div class="night-timeline" id="night-timeline" hidden>
+              <p class="sub-caption">When you were up</p>
+              <div class="away-track" id="night-track"></div>
+              <div class="away-axis">
+                <span id="night-axis-from"></span><span id="night-axis-to"></span>
+              </div>
+              <p class="card-note" id="night-up-list"></p>
+            </div>
+
+            <!-- Every stat is a button: it expands into that metric's actual
+                 curve across the night's window (see openNightMetric). -->
+            <dl class="stat-row stat-row-clickable" id="night-detail-stats"></dl>
+            <div class="night-metric" id="night-metric" hidden>
+              <p class="sub-caption" id="night-metric-caption"></p>
+              <div class="chart chart-tall" id="night-metric-chart"></div>
+            </div>
             <div id="night-detail-extra"></div>
             <!-- A stray Sleeping toggle records a junk few-minute "night" that
                  would otherwise drag the mean the anomaly flags use. -->

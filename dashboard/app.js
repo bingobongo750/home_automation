@@ -2014,36 +2014,144 @@ async function openNightDetail(night) {
   document.getElementById("night-detail-window").textContent =
     `Sleeping ${axisTime(data.from, 0)} → ${axisTime(data.to, 0)} · ${hours} h`;
 
+  renderNightTimeline(data);
+
   const stats = document.getElementById("night-detail-stats");
   stats.textContent = "";
   const range = (st) => (st && st.min !== null && st.min !== undefined
     ? `min ${st.min} · max ${st.max}` : null);
   stats.append(
-    summaryStat("Temp avg", data.temp && data.temp.avg, "°C", range(data.temp), false),
-    summaryStat("Humidity avg", data.hum && data.hum.avg, "%RH", range(data.hum), false),
+    nightStat("temp", "Temp avg", data.temp && data.temp.avg, "°C", range(data.temp), false),
+    nightStat("hum", "Humidity avg", data.hum && data.hum.avg, "%RH", range(data.hum), false),
   );
   if (data.co2 && data.co2.avg !== null && data.co2.avg !== undefined) {
-    stats.append(summaryStat("CO₂ avg", data.co2.avg, "ppm",
+    stats.append(nightStat("co2", "CO₂ avg", data.co2.avg, "ppm",
       data.co2.start === null || data.co2.start === undefined
         ? null : `${data.co2.start} → ${data.co2.end} ppm`,
       data.co2.rose_significantly));
   }
   const got = (data.motion && data.motion.count) || 0;
+  // Not expandable: motion is discrete events, and a line through them would
+  // invent a curve that does not exist. The timeline above IS its chart.
   stats.append(summaryStat("Got up", got, got === 1 ? "time" : "times",
     got === 0 ? "slept through" : null, false));
 
-  const extra = document.getElementById("night-detail-extra");
-  extra.textContent = "";
-  const times = (data.motion && data.motion.events) || [];
-  if (times.length) {
-    const p = document.createElement("p");
-    p.className = "card-note";
-    p.textContent = "Up at " + times.map((t) => axisTime(t, 0)).join(", ");
-    extra.appendChild(p);
-  }
+  document.getElementById("night-detail-extra").textContent = "";
+  closeNightMetric();
 
   nightsListPane.hidden = true;
   nightsDetailPane.hidden = false;
+}
+
+/* The night as a track, one mark per awakening, width = how long you were up.
+   `awakenings` is re-derived server-side from the raw readings, so nights
+   recorded before it existed get it too; `motion.events` (bare start times) is
+   the fallback for anything the server could not re-derive. */
+function renderNightTimeline(data) {
+  const wrap = document.getElementById("night-timeline");
+  const track = document.getElementById("night-track");
+  const list = document.getElementById("night-up-list");
+  track.textContent = "";
+  const span = data.to - data.from;
+  const ups = (data.awakenings && data.awakenings.length)
+    ? data.awakenings
+    : ((data.motion && data.motion.events) || []).map((t) => ({ start: t, end: t }));
+  if (span <= 0) { wrap.hidden = true; return; }
+
+  const pct = (t) => Math.min(100, Math.max(0, ((t - data.from) / span) * 100));
+  for (const up of ups) {
+    const mark = document.createElement("span");
+    mark.className = "away-tick night-up";
+    mark.style.left = `${pct(up.start)}%`;
+    // A brief stir would be a sub-pixel sliver, so every mark keeps a minimum
+    // width; anything longer grows to its real duration.
+    const width = Math.max(pct(up.end) - pct(up.start), 0);
+    if (width > 0) mark.style.width = `max(3px, ${width}%)`;
+    mark.title = up.end > up.start
+      ? `Up ${axisTime(up.start, 0)} – ${axisTime(up.end, 0)} (${fmtMins(up.end - up.start)})`
+      : `Up at ${axisTime(up.start, 0)}`;
+    track.appendChild(mark);
+  }
+  document.getElementById("night-axis-from").textContent = axisTime(data.from, 0);
+  document.getElementById("night-axis-to").textContent = axisTime(data.to, 0);
+  list.textContent = ups.length
+    ? "Up at " + ups.map((u) => (u.end > u.start
+        ? `${axisTime(u.start, 0)} (${fmtMins(u.end - u.start)})`
+        : axisTime(u.start, 0))).join(" · ")
+    : "No movement recorded — slept through.";
+  wrap.hidden = false;
+}
+
+function fmtMins(seconds) {
+  const mins = Math.round(seconds / 60);
+  if (mins < 1) return "<1 min";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  return `${h}h ${mins % 60}m`;
+}
+
+/* A stat tile that opens its own overnight curve. Same expand-on-click idea as
+   the board's widgets, kept inside this dialog rather than stacking a second
+   overlay on top of the first. */
+function nightStat(metric, label, value, unit, sub, subAlert) {
+  const tile = summaryStat(label, value, unit, sub, subAlert);
+  tile.className = "stat-expandable";
+  tile.tabIndex = 0;
+  tile.setAttribute("role", "button");
+  tile.dataset.metric = metric;
+  tile.setAttribute("aria-expanded", "false");
+  const open = () => openNightMetric(metric, label);
+  tile.addEventListener("click", open);
+  tile.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
+  });
+  return tile;
+}
+
+const NIGHT_METRIC_OPTS = {
+  temp: { unit: "°C", decimals: 1, color: cssVar("--s-temp"), allowNegative: true },
+  hum:  { unit: "%RH", decimals: 1, color: cssVar("--s-hum") },
+  co2:  { unit: "ppm", decimals: 0, color: cssVar("--s-co2") },
+  lux:  { unit: "lx", decimals: 0, color: cssVar("--s-lux") },
+};
+
+let nightMetricOpen = null;
+
+function closeNightMetric() {
+  nightMetricOpen = null;
+  document.getElementById("night-metric").hidden = true;
+  document.querySelectorAll("#night-detail-stats .stat-expandable").forEach((t) => {
+    t.setAttribute("aria-expanded", "false");
+    t.classList.remove("open");
+  });
+}
+
+async function openNightMetric(metric, label) {
+  if (nightMetricOpen === metric) { closeNightMetric(); return; }  // click again to close
+  closeNightMetric();
+  nightMetricOpen = metric;
+  const tile = document.querySelector(`#night-detail-stats [data-metric="${metric}"]`);
+  if (tile) { tile.setAttribute("aria-expanded", "true"); tile.classList.add("open"); }
+  const pane = document.getElementById("night-metric");
+  const caption = document.getElementById("night-metric-caption");
+  const chart = document.getElementById("night-metric-chart");
+  pane.hidden = false;
+  caption.textContent = `${label} across the night`;
+  chart.textContent = "Loading…";
+  let data;
+  try {
+    data = await getJSON(
+      `/api/nights/${encodeURIComponent(nightDetailNight)}/series?metric=${metric}`);
+  } catch {
+    chart.textContent = "";
+    caption.textContent = `${label} — could not load this night's readings.`;
+    return;
+  }
+  if (nightMetricOpen !== metric) return;   // a different tile was opened meanwhile
+  const hours = ((data.to - data.from) / 3600).toFixed(1);
+  caption.textContent = `${label} across the night · ${hours} h`;
+  chart.textContent = "";
+  drawChart(chart, data.points, NIGHT_METRIC_OPTS[metric]);
 }
 
 /* Delete, behind an inline confirm rather than a browser confirm() so it
