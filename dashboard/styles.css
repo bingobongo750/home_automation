@@ -699,6 +699,18 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 @media (max-width: 560px) { .plug-pair { grid-template-columns: 1fr; } }
 
+/* The plug's IP, on its own line under the name — see the note in app.js.
+   min-width:0 on the label lets a long name wrap instead of shoving the lock
+   button out of the card, which is what "Coffee machine" did. */
+/* centre, not the .card-head default of baseline: the lock is a 44px touch
+   target on a phone, and baseline-aligning a 44px box against a 13px title
+   drops the icon well below the name. */
+.plug-control .card-head { align-items: center; gap: 8px; min-height: 0; }
+.plug-control .card-label { min-width: 0; overflow-wrap: anywhere; }
+.plug-control .plug-lock-btn { flex: none; }
+.plug-meta { margin: 6px 0 12px; }
+.plug-meta:empty { display: none; }
+
 .plug-room { margin: 0 0 14px; font-size: 12.5px; color: var(--muted); }
 
 /* Single-room hub: devices.room is seeded empty, so the subtitle collapses

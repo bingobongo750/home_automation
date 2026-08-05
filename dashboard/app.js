@@ -297,17 +297,20 @@ function plugPairDOM(device) {
   pair.className = "plug-pair";
   pair.innerHTML = `
     <article class="card plug-control">
+      <!-- Name and lock share the top row; the IP gets its own line below.
+           A plug card is only ~205px wide (four across the Power zone), and an
+           IPv4 address in mono is ~100px of that with no break opportunity, so
+           name + IP + lock on one row cannot fit and pushed the lock outside
+           the card. The lock stays in the head because it is the action. -->
       <header class="card-head">
         <h3 class="card-label"></h3>
-        <span class="head-right">
-        <code class="wire-key"></code>
         <button class="plug-lock-btn" type="button" aria-pressed="false"
                 title="Lock to prevent power-off" disabled>
           <svg class="lock-icon-unlocked" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 7.75-1.5"></path></svg>
           <svg class="lock-icon-locked" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
         </button>
-        </span>
       </header>
+      <p class="plug-meta"><code class="wire-key"></code></p>
       <p class="plug-room"></p>
       <button class="plug-switch" role="switch" aria-checked="false" disabled>
         <span class="switch-track"><span class="switch-thumb"></span></span>
