@@ -1218,8 +1218,20 @@ function summaryStat(label, value, unit, sub, subAlert) {
   return wrap;
 }
 
+/* Which summary the card currently shows, so a poll that changed nothing does
+   not rebuild it. Everything on this card derives from the stored summary — it
+   has no live values — so rebuilding was pure churn, and destructive churn at
+   that: it replaced the stat tiles and the curve pane every 5 s, so an expanded
+   overnight chart vanished about as fast as you could open it. */
+let summaryRenderedKey = null;
+
 function renderSummaryCard() {
   const s = lastSummary;
+  const key = s
+    ? `${s.to}:${localStorage.getItem(SUMMARY_DISMISS_KEY) === String(s.to) ? "off" : "on"}`
+    : "none";
+  if (key === summaryRenderedKey) return;
+  summaryRenderedKey = key;
   // Shown in ANY scene, not just Home. The two summaries are independent
   // records and each stays until dismissed or replaced by a newer one: come
   // home late and go straight to bed, and next morning you want both — the
@@ -1245,12 +1257,20 @@ function renderSummaryCard() {
   const motionSub = s.motion.count === 0 ? "slept through"
     : s.motion.events.length ? `first at ${axisTime(s.motion.events[0], 0)}` : null;
 
+  // The same night the Nights dialog shows, so the same inspection: a "when you
+  // were up" timeline, and stats that expand into their overnight curves.
+  // `s.night` is the night_summaries key, supplied by /scenes/last-summary —
+  // absent on summaries stored before that field existed, which just leaves the
+  // tiles inert rather than breaking the card.
+  renderUpTimeline(document.getElementById("summary-timeline-slot"), s);
+
   const stats = document.getElementById("summary-stats");
   stats.textContent = "";
+  const group = curveGroup(stats, document.getElementById("summary-curve-slot"), s.night);
   stats.append(
-    summaryStat("Temp avg", s.temp.avg, "°C", range(s.temp), false),
-    summaryStat("Humidity avg", s.hum.avg, "%RH", range(s.hum), false),
-    summaryStat("CO₂ avg", co2.avg, "ppm", co2Sub, co2.rose_significantly),
+    expandableStat(group, "temp", "Temp avg", s.temp.avg, "°C", range(s.temp), false),
+    expandableStat(group, "hum", "Humidity avg", s.hum.avg, "%RH", range(s.hum), false),
+    expandableStat(group, "co2", "CO₂ avg", co2.avg, "ppm", co2Sub, co2.rose_significantly),
     summaryStat("Got up", s.motion.count, s.motion.count === 1 ? "time" : "times", motionSub, false),
   );
   renderSummaryHealth(s.health);
@@ -2023,18 +2043,21 @@ async function openNightDetail(night) {
   document.getElementById("night-detail-window").textContent =
     `Sleeping ${axisTime(data.from, 0)} → ${axisTime(data.to, 0)} · ${hours} h`;
 
-  renderNightTimeline(data);
+  renderUpTimeline(document.getElementById("night-timeline-slot"), data);
 
   const stats = document.getElementById("night-detail-stats");
   stats.textContent = "";
+  const group = curveGroup(stats, document.getElementById("night-curve-slot"), data.night);
   const range = (st) => (st && st.min !== null && st.min !== undefined
     ? `min ${st.min} · max ${st.max}` : null);
   stats.append(
-    nightStat("temp", "Temp avg", data.temp && data.temp.avg, "°C", range(data.temp), false),
-    nightStat("hum", "Humidity avg", data.hum && data.hum.avg, "%RH", range(data.hum), false),
+    expandableStat(group, "temp", "Temp avg", data.temp && data.temp.avg, "°C",
+                   range(data.temp), false),
+    expandableStat(group, "hum", "Humidity avg", data.hum && data.hum.avg, "%RH",
+                   range(data.hum), false),
   );
   if (data.co2 && data.co2.avg !== null && data.co2.avg !== undefined) {
-    stats.append(nightStat("co2", "CO₂ avg", data.co2.avg, "ppm",
+    stats.append(expandableStat(group, "co2", "CO₂ avg", data.co2.avg, "ppm",
       data.co2.start === null || data.co2.start === undefined
         ? null : `${data.co2.start} → ${data.co2.end} ppm`,
       data.co2.rose_significantly));
@@ -2046,28 +2069,56 @@ async function openNightDetail(night) {
     got === 0 ? "slept through" : null, false));
 
   document.getElementById("night-detail-extra").textContent = "";
-  closeNightMetric();
 
   nightsListPane.hidden = true;
   nightsDetailPane.hidden = false;
 }
 
-/* The night as a track, one mark per awakening, width = how long you were up.
-   `awakenings` is re-derived server-side from the raw readings, so nights
-   recorded before it existed get it too; `motion.events` (bare start times) is
-   the fallback for anything the server could not re-derive. */
-function renderNightTimeline(data) {
-  const wrap = document.getElementById("night-timeline");
-  const track = document.getElementById("night-track");
-  const list = document.getElementById("night-up-list");
-  track.textContent = "";
-  const span = data.to - data.from;
-  const ups = (data.awakenings && data.awakenings.length)
-    ? data.awakenings
-    : ((data.motion && data.motion.events) || []).map((t) => ({ start: t, end: t }));
-  if (span <= 0) { wrap.hidden = true; return; }
+/* ---------------------------------------------------------------------------
+   Shared night-inspection pieces: the "when you were up" timeline, and turning
+   a stat tile into that metric's overnight curve.
 
-  const pct = (t) => Math.min(100, Math.max(0, ((t - data.from) / span) * 100));
+   Used by BOTH the Nights dialog and the morning summary card. They show the
+   same night, so they get the same affordances from one definition — the
+   markup is built here rather than written twice in index.html.
+   --------------------------------------------------------------------------- */
+
+function fmtMins(seconds) {
+  const mins = Math.round(seconds / 60);
+  if (mins < 1) return "<1 min";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  return `${h}h ${mins % 60}m`;
+}
+
+/* `awakenings` (start/end/samples) is re-derived server-side, so nights
+   recorded before it existed have it too; `motion.events` (bare start times) is
+   the fallback for anything that could not be re-derived. */
+function upsFrom(data) {
+  if (data.awakenings && data.awakenings.length) return data.awakenings;
+  return ((data.motion && data.motion.events) || []).map((ts) => ({ start: ts, end: ts }));
+}
+
+/* The window as a track with one mark per awakening. Returns null when there is
+   no window to draw. Same track-and-tick language as the away card's
+   disturbance timeline, for the same reason: WHERE in the night something
+   happened is the first thing you want, and a list of timestamps cannot show
+   it. Each mark's width is its duration, so a 20-minute stretch at 3am reads
+   differently from a brief stir. */
+function buildUpTimeline(from, to, ups) {
+  const span = to - from;
+  if (!(span > 0)) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "night-timeline";
+
+  const caption = document.createElement("p");
+  caption.className = "sub-caption";
+  caption.textContent = "When you were up";
+
+  const track = document.createElement("div");
+  track.className = "away-track";
+  const pct = (ts) => Math.min(100, Math.max(0, ((ts - from) / span) * 100));
   for (const up of ups) {
     const mark = document.createElement("span");
     mark.className = "away-tick night-up";
@@ -2081,40 +2132,32 @@ function renderNightTimeline(data) {
       : `Up at ${axisTime(up.start, 0)}`;
     track.appendChild(mark);
   }
-  document.getElementById("night-axis-from").textContent = axisTime(data.from, 0);
-  document.getElementById("night-axis-to").textContent = axisTime(data.to, 0);
+
+  const axis = document.createElement("div");
+  axis.className = "away-axis";
+  const axFrom = document.createElement("span");
+  axFrom.textContent = axisTime(from, 0);
+  const axTo = document.createElement("span");
+  axTo.textContent = axisTime(to, 0);
+  axis.append(axFrom, axTo);
+
+  // Also as text: marks can overlap on a phone, and the list carries durations.
+  const list = document.createElement("p");
+  list.className = "card-note";
   list.textContent = ups.length
     ? "Up at " + ups.map((u) => (u.end > u.start
         ? `${axisTime(u.start, 0)} (${fmtMins(u.end - u.start)})`
         : axisTime(u.start, 0))).join(" · ")
     : "No movement recorded — slept through.";
-  wrap.hidden = false;
+
+  wrap.append(caption, track, axis, list);
+  return wrap;
 }
 
-function fmtMins(seconds) {
-  const mins = Math.round(seconds / 60);
-  if (mins < 1) return "<1 min";
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  return `${h}h ${mins % 60}m`;
-}
-
-/* A stat tile that opens its own overnight curve. Same expand-on-click idea as
-   the board's widgets, kept inside this dialog rather than stacking a second
-   overlay on top of the first. */
-function nightStat(metric, label, value, unit, sub, subAlert) {
-  const tile = summaryStat(label, value, unit, sub, subAlert);
-  tile.className = "stat-expandable";
-  tile.tabIndex = 0;
-  tile.setAttribute("role", "button");
-  tile.dataset.metric = metric;
-  tile.setAttribute("aria-expanded", "false");
-  const open = () => openNightMetric(metric, label);
-  tile.addEventListener("click", open);
-  tile.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
-  });
-  return tile;
+function renderUpTimeline(slot, data) {
+  slot.textContent = "";
+  const el = buildUpTimeline(data.from, data.to, upsFrom(data));
+  if (el) slot.appendChild(el);
 }
 
 const NIGHT_METRIC_OPTS = {
@@ -2124,43 +2167,79 @@ const NIGHT_METRIC_OPTS = {
   lux:  { unit: "lx", decimals: 0, color: cssVar("--s-lux") },
 };
 
-let nightMetricOpen = null;
-
-function closeNightMetric() {
-  nightMetricOpen = null;
-  document.getElementById("night-metric").hidden = true;
-  document.querySelectorAll("#night-detail-stats .stat-expandable").forEach((t) => {
-    t.setAttribute("aria-expanded", "false");
-    t.classList.remove("open");
+/* A stat tile that opens its own overnight curve. `group` is the object
+   returned by curveGroup() — the open/closed state belongs to that group, not
+   to the module, so the dialog and the card can each have one open at once. */
+function expandableStat(group, metric, label, value, unit, sub, subAlert) {
+  const tile = summaryStat(label, value, unit, sub, subAlert);
+  tile.className = "stat-expandable";
+  tile.tabIndex = 0;
+  tile.setAttribute("role", "button");
+  tile.dataset.metric = metric;
+  tile.setAttribute("aria-expanded", "false");
+  const open = () => group.toggle(metric, label);
+  tile.addEventListener("click", open);
+  tile.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
   });
+  return tile;
 }
 
-async function openNightMetric(metric, label) {
-  if (nightMetricOpen === metric) { closeNightMetric(); return; }  // click again to close
-  closeNightMetric();
-  nightMetricOpen = metric;
-  const tile = document.querySelector(`#night-detail-stats [data-metric="${metric}"]`);
-  if (tile) { tile.setAttribute("aria-expanded", "true"); tile.classList.add("open"); }
-  const pane = document.getElementById("night-metric");
-  const caption = document.getElementById("night-metric-caption");
-  const chart = document.getElementById("night-metric-chart");
-  pane.hidden = false;
-  caption.textContent = `${label} across the night`;
-  chart.textContent = "Loading…";
-  let data;
-  try {
-    data = await getJSON(
-      `/api/nights/${encodeURIComponent(nightDetailNight)}/series?metric=${metric}`);
-  } catch {
-    chart.textContent = "";
-    caption.textContent = `${label} — could not load this night's readings.`;
-    return;
-  }
-  if (nightMetricOpen !== metric) return;   // a different tile was opened meanwhile
-  const hours = ((data.to - data.from) / 3600).toFixed(1);
-  caption.textContent = `${label} across the night · ${hours} h`;
-  chart.textContent = "";
-  drawChart(chart, data.points, NIGHT_METRIC_OPTS[metric]);
+/* One expandable-curve group: the stats row, the pane its charts render into,
+   and which night to fetch. `nightKey` is read at click time, not captured, so
+   a group survives the summary being replaced by a newer night. */
+function curveGroup(statsEl, slot, nightKey) {
+  slot.textContent = "";
+  const pane = document.createElement("div");
+  pane.className = "night-metric";
+  pane.hidden = true;
+  const caption = document.createElement("p");
+  caption.className = "sub-caption";
+  const chart = document.createElement("div");
+  chart.className = "chart chart-tall";
+  pane.append(caption, chart);
+  slot.appendChild(pane);
+
+  const group = {
+    open: null,
+    nightKey,
+    close() {
+      group.open = null;
+      pane.hidden = true;
+      statsEl.querySelectorAll(".stat-expandable").forEach((tile) => {
+        tile.setAttribute("aria-expanded", "false");
+        tile.classList.remove("open");
+      });
+    },
+    async toggle(metric, label) {
+      if (group.open === metric) { group.close(); return; }  // click again to close
+      group.close();
+      if (!group.nightKey) {                 // no night to fetch a curve for
+        return;
+      }
+      group.open = metric;
+      const tile = statsEl.querySelector(`[data-metric="${metric}"]`);
+      if (tile) { tile.setAttribute("aria-expanded", "true"); tile.classList.add("open"); }
+      pane.hidden = false;
+      caption.textContent = `${label} across the night`;
+      chart.textContent = "Loading…";
+      let data;
+      try {
+        data = await getJSON(
+          `/api/nights/${encodeURIComponent(group.nightKey)}/series?metric=${metric}`);
+      } catch {
+        chart.textContent = "";
+        caption.textContent = `${label} — could not load this night's readings.`;
+        return;
+      }
+      if (group.open !== metric) return;     // another tile was opened meanwhile
+      const hours = ((data.to - data.from) / 3600).toFixed(1);
+      caption.textContent = `${label} across the night · ${hours} h`;
+      chart.textContent = "";
+      drawChart(chart, data.points, NIGHT_METRIC_OPTS[metric]);
+    },
+  };
+  return group;
 }
 
 /* Delete, behind an inline confirm rather than a browser confirm() so it

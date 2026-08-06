@@ -613,6 +613,18 @@ keep this list in sync when endpoints change:
   render red, and a night can be **deleted** from that dialog — a stray Sleeping toggle
   records a junk few-minute "night" that would otherwise drag the mean those flags are
   measured against.
+- **The morning card and the per-night dialog share their night inspection.** Both show
+  the same night, so both get the same "when you were up" timeline and the same
+  expandable overnight curves — built once by `buildUpTimeline()` / `curveGroup()` in
+  `app.js` and dropped into slots, rather than written twice in `index.html`.
+  `GET /api/scenes/last-summary` adds `awakenings` and `night` on read for this: the
+  first so the card can show durations, the second so it can request
+  `/nights/:date/series` (the key is derived server-side by `db.night_key()` — having
+  the browser recompute a server key is how the two drift apart).
+  The card is **only rebuilt when the summary actually changes** (`summaryRenderedKey`).
+  Everything on it derives from the stored summary, so re-rendering on the 5s poll was
+  pure churn — and destructive churn: it replaced the tiles and the curve pane every
+  tick, so an expanded chart vanished about as fast as you could open it.
 - **The per-night dialog answers "when did I get up", not just how often.** It leads with
   a **timeline** — the sleep window as a track, one mark per awakening — reusing the away
   card's `.away-track`/`.away-axis` language, for the same reason: *where* in the night

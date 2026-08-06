@@ -400,8 +400,25 @@ def scene_active():
 @api.get("/scenes/last-summary")
 def scene_last_summary():
     """Most recent Sleeping->Home overnight summary, or {"summary": null}
-    before the first one exists."""
-    return jsonify({"summary": db.get_setting("last_sleep_summary")})
+    before the first one exists.
+
+    Two fields are added on read so the morning card can offer the same
+    inspection the Nights dialog does, rather than being a flatter view of the
+    identical night:
+
+      awakenings  when you got up, with durations (see awakenings_in)
+      night       the `night_summaries` key for this window, so the card can
+                  request /nights/:date/series for a metric's overnight curve.
+                  Derived here rather than in the browser: the key is the local
+                  date of the wake morning, and having the client recompute a
+                  server-side key is how the two quietly drift apart.
+    """
+    summary = db.get_setting("last_sleep_summary")
+    if summary and summary.get("from") and summary.get("to"):
+        summary = dict(summary)
+        summary["awakenings"] = awakenings_in(summary["from"], summary["to"])
+        summary["night"] = db.night_key(summary["to"])
+    return jsonify({"summary": summary})
 
 
 @api.get("/scenes/last-away-summary")
@@ -471,6 +488,27 @@ def nights_list():
 METRIC_SERIES = {"temp", "hum", "co2", "lux"}
 
 
+def awakenings_in(since: float, until: float) -> list[dict]:
+    """When you got up during a window, with how long each time lasted.
+
+    Re-derived from the `readings` rows rather than read out of a stored
+    summary, which keeps only the bare start timestamps. `readings` is never
+    pruned, so this works for nights recorded long before the field existed —
+    no migration. Clustering is mandatory, not a nicety: a PIR emits a row per
+    cycle for as long as it can see you, so the raw rows would report one trip
+    to the bathroom as dozens of awakenings.
+
+    Shared by /nights/:date and /scenes/last-summary so the Nights dialog and
+    the morning card cannot disagree about the same night.
+    """
+    stamps = [e["ts"] for e in db.motion_events(since, limit=5000, until=until)]
+    return [
+        {"start": e["start"], "end": e["end"], "samples": e["samples"],
+         "duration_s": round(e["end"] - e["start"])}
+        for e in scenes.cluster_events(stamps, config.DISTURBANCE_COOLDOWN_S)
+    ]
+
+
 @api.get("/nights/<night>")
 def night_detail(night: str):
     """One night's full stored summary, plus `awakenings` — when you got up.
@@ -489,12 +527,7 @@ def night_detail(night: str):
     row = db.get_night_summary(night)
     if row is None:
         return jsonify({"error": "no summary for that night"}), 404
-    stamps = [e["ts"] for e in db.motion_events(row["from"], limit=5000, until=row["to"])]
-    row["awakenings"] = [
-        {"start": e["start"], "end": e["end"], "samples": e["samples"],
-         "duration_s": round(e["end"] - e["start"])}
-        for e in scenes.cluster_events(stamps, config.DISTURBANCE_COOLDOWN_S)
-    ]
+    row["awakenings"] = awakenings_in(row["from"], row["to"])
     return jsonify(row)
 
 

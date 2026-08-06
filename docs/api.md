@@ -227,6 +227,12 @@ and changing that schedule never means editing a Shortcut.
 - `GET /presence` → `{"state": "home"|"away", "since", "last_event",
   "last_event_at", "departure_pending"}`.
 
+
+  Two fields are derived on read, so the morning card can offer the same
+  inspection as the Nights dialog for the same night: `awakenings` (as
+  `/nights/:date`) and `night`, the `night_summaries` key, which the card uses to
+  request `/nights/:date/series`. The key is computed server-side — a browser
+  recomputing it is how client and server quietly disagree.
 - `GET /scenes/last-away-summary` → `{"summary": null}` or the most recent
   Away→(Home|Sleeping) disturbance summary:
   `{"from", "to", "duration_s", "disturbed", "motion": {events, samples, times},

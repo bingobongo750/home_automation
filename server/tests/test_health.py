@@ -12,7 +12,7 @@ and the latest-night readout endpoint.
 import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 # config.py reads these at import time — set them before touching app.*
 _TMP = tempfile.mkdtemp(prefix="hub-test-")
@@ -440,9 +440,13 @@ class HealthDerivedTestCase(unittest.TestCase):
                          ["core", "deep", "rem", "awake", "core", "rem"])
 
     def test_history_endpoint(self):
+        # Seeded relative to TODAY, not to the module's fixed BED. /history
+        # filters from `today - range`, so a date-pinned fixture silently falls
+        # out of the window as real time passes: this asserted 3 nights and
+        # started returning 2 the day the calendar moved past BED + 30 days.
+        base = datetime.combine(date.today() - timedelta(days=3), time(23, 0))
         for offset in range(3):
-            bed = BED - timedelta(days=offset)
-            self.ingest(hypnogram_night(bed))
+            self.ingest(hypnogram_night(base - timedelta(days=offset)))
         resp = self.client.get("/api/health/history?range=30d")
         self.assertEqual(resp.status_code, 200)
         out = resp.get_json()

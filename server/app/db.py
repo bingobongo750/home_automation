@@ -360,11 +360,19 @@ def set_presence(state: str, since: float | None,
                              "last_event_at": last_event_at})
 
 
+def night_key(to_ts: float) -> str:
+    """The `night_summaries` primary key for a window: the LOCAL date of the
+    wake morning. One definition, because anything that wants to look a night
+    up by key — including /scenes/last-summary handing the key to the
+    dashboard — has to agree with what save_night_summary wrote."""
+    return datetime.fromtimestamp(to_ts).strftime("%Y-%m-%d")
+
+
 def save_night_summary(from_ts: float, to_ts: float, summary: dict) -> None:
     """Record one night so it can be reviewed later. Keyed by the wake
     morning's local date; re-running a night replaces it rather than
     duplicating (a re-activated Sleeping keeps its original start)."""
-    night = datetime.fromtimestamp(to_ts).strftime("%Y-%m-%d")
+    night = night_key(to_ts)
     with connect() as conn:
         conn.execute(
             """INSERT INTO night_summaries (night, from_ts, to_ts, summary)

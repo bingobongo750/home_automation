@@ -151,5 +151,63 @@ class NightDetailTestCase(unittest.TestCase):
             self.assertEqual(resp.get_json()["metric"], metric)
 
 
+class LastSummaryTestCase(unittest.TestCase):
+    """The morning card renders from /scenes/last-summary and offers the same
+    inspection as the Nights dialog, so that response has to carry the two
+    fields that make it possible."""
+
+    @classmethod
+    def setUpClass(cls):
+        db.init_db()
+        app = Flask(__name__)
+        app.register_blueprint(api)
+        cls.client = app.test_client()
+
+    def setUp(self):
+        with db.connect() as conn:
+            conn.execute("DELETE FROM readings")
+            conn.execute("DELETE FROM night_summaries")
+            conn.execute("DELETE FROM settings")
+        self.end = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
+        self.start = self.end - timedelta(hours=9)
+        self.from_ts, self.to_ts = self.start.timestamp(), self.end.timestamp()
+        with db.connect() as conn:
+            for k in range(0, 20 * 60 + 1, 30):     # one 20-minute awakening
+                conn.execute("INSERT INTO readings (metric, ts, value) VALUES ('motion', ?, 1)",
+                             (self.from_ts + 4 * 3600 + k,))
+        summary = {"from": self.from_ts, "to": self.to_ts,
+                   "motion": {"count": 1, "samples": 41, "events": [self.from_ts + 4 * 3600]}}
+        db.save_night_summary(self.from_ts, self.to_ts, summary)
+        db.set_setting("last_sleep_summary", summary)
+
+    def test_carries_awakenings_with_durations(self):
+        s = self.client.get("/api/scenes/last-summary").get_json()["summary"]
+        self.assertEqual(len(s["awakenings"]), 1)
+        self.assertEqual(round(s["awakenings"][0]["duration_s"]), 20 * 60)
+
+    def test_carries_the_night_key_and_it_matches_the_stored_row(self):
+        """The card feeds this straight to /nights/:date/series, so it has to be
+        the same key save_night_summary wrote — not something the browser
+        reconstructs from a timestamp."""
+        s = self.client.get("/api/scenes/last-summary").get_json()["summary"]
+        self.assertEqual(s["night"], db.night_key(self.to_ts))
+        self.assertIsNotNone(db.get_night_summary(s["night"]))
+        resp = self.client.get(f"/api/nights/{s['night']}/series?metric=temp")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_null_summary_stays_null(self):
+        with db.connect() as conn:
+            conn.execute("DELETE FROM settings")
+        self.assertIsNone(self.client.get("/api/scenes/last-summary").get_json()["summary"])
+
+    def test_a_summary_without_a_window_is_passed_through_untouched(self):
+        """Defensive: anything stored before `from`/`to` existed must not 500 the
+        card's endpoint."""
+        db.set_setting("last_sleep_summary", {"temp": {"avg": 21}})
+        s = self.client.get("/api/scenes/last-summary").get_json()["summary"]
+        self.assertEqual(s, {"temp": {"avg": 21}})
+        self.assertNotIn("night", s)
+
+
 if __name__ == "__main__":
     unittest.main()
