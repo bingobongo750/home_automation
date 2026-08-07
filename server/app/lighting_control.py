@@ -14,25 +14,32 @@ room" and "our bulbs are working" are indistinguishable.
 So this is a closed loop with a setpoint: drive the MEASURED lux to
 `target_lux` by adjusting brightness, and say plainly when it cannot.
 
-WHO OWNS WHAT: AUTO OWNS BRIGHTNESS, THE USER OWNS ON/OFF
----------------------------------------------------------
-This module returns a brightness and nothing else. It has no opinion about
-whether a lamp is on, and app/lighting.py never sends the `on` field.
+WHO OWNS WHAT: THE USER ARMS A ZONE, AUTO DRIVES IT
+---------------------------------------------------
+This module returns a brightness and nothing else. Brightness 0 is meaningful
+and is not a no-op: it means "this zone should emit no light", which
+app/lighting.py renders by switching the bulb off.
 
-The zone's on/off switch is the user deciding *which lamps may light at all* —
-a master gate, not a value for the loop to fight over. It used to be exactly
-that fight: the job pushed `on=True` every tick, so switching a zone off while
-it was in auto mode simply undid itself seconds later. Off has to win.
+The split is between two questions that look alike and are not:
 
-The consequence to be aware of: when the loop wants zero light from a zone the
-user has left ON, it commands brightness 0, and the transport floors that to
-the Shelly's 1 % minimum (the bulb rejects 0 — "off" is only expressible
-through `on`, which is no longer ours to send). So a switched-on zone bottoms
-out at a faint glow rather than going dark. That is the honest price of the
-rule, and it is nearly always invisible: the loop only wants zero light when
-ambient already exceeds the target, i.e. when the room is bright enough that
-1 % cannot be seen. If a lamp should be truly dark, switch it off — which is
-precisely the control this change hands back.
+  * MAY this lamp light at all? The user's, and only the user's. Stored as
+    `devices.switch_on`, never written by the loop or by a scene.
+  * Is it lit, and how brightly, right now? The loop's, within an armed zone.
+
+Keeping the gate in the database rather than reading it back off the bulb is
+what lets the loop own the physical switch. The earlier design inferred the
+gate from the bulb's `on`, so the loop could not touch `on` without destroying
+the signal it was reading — and the first version of that did exactly the wrong
+thing, pushing `on=True` every tick so switching a zone off undid itself
+seconds later.
+
+The visible payoff: an armed zone shows its switch ON all afternoon with the
+lamp dark, because the room is already past target. That is the readout the
+switch is for — which lamps will come up when the room dims.
+
+Brightness 0 must therefore never be sent to the bulb as a brightness: the
+Shelly rejects 0 and the transport floors it to 1 %, which is the faint glow
+this whole arrangement exists to switch off.
 
 WHY INTEGRAL-ONLY, NOT PID
 --------------------------
@@ -207,8 +214,13 @@ def correct(*, measured_lux, target_lux, brightness, max_brightness,
     return Correction(new_brightness, CONVERGING, error, step_scale, sign)
 
 
-def describe(state, *, target_lux, measured_lux=None):
-    """One-line human explanation, for logs and the dashboard card."""
+def describe(state, *, target_lux, measured_lux=None, lit=None):
+    """One-line human explanation, for logs and the dashboard card.
+
+    `lit` is whether the loop currently has its armed zones switched on. It
+    changes the wording rather than the meaning: "the lamp is off" and "you
+    switched the lamp off" look identical on a card, and the whole point of
+    arming a zone is being able to tell them apart."""
     lux = "—" if measured_lux is None else f"{measured_lux:.0f} lx"
     if state == OFF_BY_SETTING:
         return "Auto lighting off (target set to 0 lx)."
@@ -219,11 +231,12 @@ def describe(state, *, target_lux, measured_lux=None):
     if state == STALE:
         return "Waiting for a fresh light reading."
     if state == TOO_BRIGHT:
-        # "at minimum", not "off": the loop no longer switches zones off, it
-        # bottoms their brightness out (see the ownership note above).
-        return f"Room already brighter than target ({lux} vs {target_lux:.0f} lx) — at minimum."
+        return (f"Room is bright enough ({lux} vs {target_lux:.0f} lx) — "
+                "lamp off until it dims.")
     if state == AT_MAX:
         return f"At maximum brightness, still below target ({lux} of {target_lux:.0f} lx)."
     if state == HOLDING:
+        if lit is False:
+            return f"At target ({lux}) on ambient light alone — lamp off until it dims."
         return f"Holding {target_lux:.0f} lx ({lux})."
     return f"Adjusting toward {target_lux:.0f} lx ({lux})."

@@ -138,16 +138,29 @@ data before it hits the database or API layer.
   settings dialog via `GET/PUT /api/settings/lighting`, seeded from
   `LIGHTING_TARGET_LUX` (default **5 lx**). Zones in `manual` mode are left alone; the
   dashboard drives those via `POST /api/devices/:id/state`.
-  - **Auto owns brightness; the user owns on/off.** The loop sends `brightness` and
-    **never `on`**, and each tick it reads every auto zone's switch and drives only the
-    ones that are ON. Two consequences: a switched-on zone bottoms out at the Shelly's
-    1 % floor rather than going dark (0 is not sendable — "off" only exists through
-    `on`), which is nearly always invisible since the loop only wants zero light when
-    ambient already beats the target; and when **no** auto zone is on the loop **holds
-    its integrator** rather than integrating against a room it cannot affect, or
-    flipping a switch back on would blast whatever it had wound up to. `target_lux` of
-    0 likewise means *hands off entirely*, not "dim everything to 1 %".
-    `GET /api/devices` reports `auto.state = "zones_off"` on a switched-off zone
+  - **The user arms a zone; auto drives it.** These are two questions, and keeping
+    them apart is the whole design: *may this lamp light at all* is the user's,
+    stored as `devices.switch_on` and written by nothing automatic (not the loop,
+    not a scene); *is it lit, and how brightly, right now* is the loop's, within an
+    armed zone. So the loop skips disarmed zones entirely, and inside an armed one it
+    owns **both brightness and `on`** — at zero brightness it switches the bulb off
+    rather than leaving it at the Shelly's 1 % floor, which is a visible glow.
+    The payoff is the readout: an armed zone shows its switch **on** through a bright
+    afternoon with the bulb dark (`light.on` is the gate, `light.lit` the bulb), so
+    the board says which lamps will come up when the room dims.
+    **The loop must never read the gate back off the bulb** — that was the earlier
+    design, and it is why the loop could not touch `on`: it would have been
+    overwriting the signal it was reading, so its own switch-off would look like the
+    user disarming the zone and the lamp would never return. Hence the column, which
+    also survives restarts. `_seed_brightness()` starts from **0** when armed zones
+    are dark, since a bulb keeps its brightness attribute while off and seeding from
+    it would flash the lamps on after every restart in a bright room.
+    When **no** auto zone is armed the loop **holds its integrator** rather than
+    integrating against a room it cannot affect, or arming one again would blast
+    whatever it had wound up to. `target_lux` of 0 likewise means *hands off
+    entirely*, not "switch everything off" — which would be indistinguishable from
+    the loop deciding the room is bright enough.
+    `GET /api/devices` reports `auto.state = "zones_off"` on a disarmed zone
     instead of the shared controller state, which would otherwise claim it was
     converging.
   - It **replaced an open-loop linear ramp** (full brightness at pitch dark fading to
@@ -545,13 +558,15 @@ keep this list in sync when endpoints change:
   as `/#health`, built pass-by-pass per `docs/health-build-plan.md`) each earned a
   separate view only because neither is a device lane at all — don't take them as
   precedent for splitting device zones into tabs.
-- Each Lighting card's top-right switch is always the zone's physical on/off, and it
-  stays clickable in both modes. **It is a master gate and it beats the auto loop:**
-  the user decides which lamps may light at all, and a zone switched off stays off no
-  matter what auto mode wants. It used to be the opposite — the job pushed `on=True`
-  every tick, so switching a zone off while in `auto` undid itself seconds later. The
-  card says so per zone ("Switched off — auto lighting will not turn it on."), because
-  the backend's `auto` status describes the zones actually being driven. Mode (`manual`/`auto`) is one of the control
+- Each Lighting card's top-right switch stays clickable in both modes. **It is a master
+  gate and it beats the auto loop:** the user decides which lamps may light at all, and
+  a disarmed zone stays dark no matter what auto mode wants. The card says so per zone
+  ("Switched off — auto lighting will not turn it on."), because the backend's `auto`
+  status describes the zones actually being driven. In `auto` the switch shows the
+  **stored gate, not the bulb** — an armed zone reads as on while the loop keeps it
+  dark through a bright afternoon, and the status line explains it ("Room is bright
+  enough (315 lx vs 5 lx) — lamp off until it dims."). That is what makes the board
+  answer "which lamps come on when it gets dark". Mode (`manual`/`auto`) is one of the control
   rows alongside brightness/color. In `auto` mode only the brightness control
   goes read-only (the lighting job drives it from lux) but keeps displaying the live
   value every poll rather than freezing or disappearing; color stays editable in

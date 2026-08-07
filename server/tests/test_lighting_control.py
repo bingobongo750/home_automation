@@ -65,8 +65,8 @@ class TestStates(unittest.TestCase):
         r = correct(measured_lux=400.0, brightness=0)
         self.assertEqual(r.state, lc.TOO_BRIGHT)
         self.assertEqual(r.brightness, 0)
-        self.assertIn("brighter than target", lc.describe(r.state, target_lux=5.0,
-                                                          measured_lux=400.0))
+        self.assertIn("bright enough", lc.describe(r.state, target_lux=5.0,
+                                                   measured_lux=400.0))
 
     def test_bulb_too_weak_reports_at_max(self):
         r = correct(measured_lux=1.0, brightness=180)

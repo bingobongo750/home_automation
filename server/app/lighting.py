@@ -7,21 +7,30 @@ not block on (or be blocked by) either.
 The control law, and the reasoning for it, lives in app/lighting_control.py
 (pure, no IO). This file owns the things that need the real world:
 
-0. THE ON/OFF SWITCH IS A MASTER GATE, AND IT BEATS THE LOOP. Auto sets
-   brightness; the user decides which lamps may light at all. So every tick
-   reads each auto zone's switch and drives only the ones that are ON, and the
-   pushes carry `brightness` alone — never `on`. Before this, the job pushed
-   `on=True` every tick, which meant switching a zone off while it was in auto
-   mode silently undid itself seconds later.
+0. THE ON/OFF SWITCH IS A MASTER GATE, AND IT BEATS THE LOOP — but the gate is
+   a STORED SETTING, not the bulb's current on/off. Those are two different
+   questions and conflating them was the bug this design fixes:
 
-   Two consequences worth knowing. A switched-on zone bottoms out at the
-   Shelly's 1 % floor rather than going dark, because "off" is only expressible
-   through `on` (see the note in lighting_control.py) — almost always invisible,
-   since the loop only wants zero light when the room is already brighter than
-   the target. And when NO auto zone is on, the loop holds its integrator
-   instead of integrating against a room it cannot affect; otherwise it would
-   wind up to full while blind and blast the room the moment a switch went back
-   on.
+     gate  (devices.switch_on)  "may this lamp light at all?"   — the user's
+     lit   (the bulb's `on`)    "is it lit right now?"          — the loop's
+
+   The user owns the gate; nothing automatic writes it. Within an armed zone
+   the loop owns both brightness AND the physical on/off, so when it wants zero
+   light it switches the bulb off outright instead of bottoming it out at the
+   Shelly's 1 % floor. A zone whose gate is off is skipped entirely and is
+   never lit.
+
+   That is what makes the dashboard switch mean "armed": it stays ON through a
+   bright afternoon with the lamp physically dark, so you can see at a glance
+   which lamps will come up when the room dims. The earlier design read the
+   gate straight off the bulb, which is why the loop could not touch `on` — it
+   would have been overwriting the very signal it was reading, and the first
+   version of that bug pushed `on=True` every tick so switching a zone off
+   undid itself seconds later. Storing the gate separates them.
+
+   When NO auto zone is armed, the loop holds its integrator instead of
+   integrating against a room it cannot affect; otherwise it would wind up to
+   full while blind and blast the room the moment a zone was armed again.
 
 1. ONE CONTROLLER FOR ALL ZONES, not one per zone. There is a single BH1750 and
    a single room. Two independent controllers reading the same sensor would
@@ -83,6 +92,17 @@ def poke() -> None:
     _poke.set()
 
 
+def commanded_brightness() -> int:
+    """The controller's current integrator — the brightness an armed zone should
+    be lit at right now, or 0 when it wants the room dark.
+
+    The /state endpoint reads it when the user arms a zone, so the lamp comes up
+    at the right level immediately rather than flashing on at a stale value and
+    being corrected a tick later — or, when the loop wants darkness, does not
+    flash on at all."""
+    return _brightness
+
+
 def _suppressing_scene() -> str | None:
     """Name of the active scene suppressing auto mode, or None. Any scene
     other than 'Home' pins zones to its explicit values — the auto job must
@@ -103,6 +123,11 @@ status: dict = {
     "target_lux": config.LIGHTING_TARGET_LUX,
     "measured_lux": None,
     "brightness": 0,
+    # Whether the loop currently wants its armed zones lit at all. False means
+    # the room is already bright enough and the bulbs are off — an armed zone
+    # still shows its switch ON, so this is what tells the card apart from
+    # "switched off by the user".
+    "lit": False,
 }
 
 # The controller's integrator: the brightness we last commanded. Seeded at
@@ -121,19 +146,40 @@ _last_sign = 0
 
 
 def _seed_brightness() -> None:
-    """Adopt a live zone's brightness as the integrator's starting point."""
+    """Adopt a LIT zone's brightness as the integrator's starting point, so a
+    restart does not drop the room to dark and spend several ticks climbing back.
+
+    Only a lit zone counts. A bulb keeps its brightness attribute while switched
+    off, so an armed-but-dark zone still reports the level it last shone at —
+    and that is precisely the level the loop had decided against. Seeding from it
+    would flash the lamps on after every restart in a bright room and take a
+    string of ticks to walk back down. Armed and dark means the controller wanted
+    darkness: start from 0 and let it climb if the room disagrees."""
     global _brightness
-    for zone in zones.values():
+    armed_seen = False
+    for device in db.list_devices():
+        if device["type"] != "bulb_zone" or not db.device_switch_on(device):
+            continue
+        zone = zones.get(device["id"])
+        if zone is None:
+            continue
         try:
             state = zone.state()
         except BulbError:
             continue
-        if state and state.get("brightness") is not None:
+        if not state:
+            continue
+        armed_seen = True
+        if state.get("on") and state.get("brightness") is not None:
             _brightness = int(state["brightness"])
             log.info("Auto-lighting starting from the zone's current brightness %d/255",
                      _brightness)
             return
-    log.info("No zone reachable at startup — auto-lighting starts from 0/255")
+    _brightness = 0
+    if armed_seen:
+        log.info("Armed zones are all dark — auto-lighting starts from 0/255")
+    else:
+        log.info("No armed zone reachable at startup — auto-lighting starts from 0/255")
 
 
 # Per-tick bookkeeping that used to be locals of the loop. Module-level so the
@@ -159,8 +205,8 @@ def _one_tick() -> None:
     if scene is not None:
         return
 
-    auto_devices = {d["id"] for d in db.list_devices()
-                    if d["type"] == "bulb_zone" and d.get("mode") == "auto"}
+    auto_devices = [d for d in db.list_devices()
+                    if d["type"] == "bulb_zone" and d.get("mode") == "auto"]
     if not auto_devices:
         return
 
@@ -171,21 +217,13 @@ def _one_tick() -> None:
     # target while the job runs.
     target_lux = db.get_lighting()["target_lux"]
 
-    # Which auto zones the user has actually switched ON. The on/off switch is a
-    # master gate: auto sets brightness, the user decides which lamps may light
-    # at all, and a zone that is off is simply skipped. Unreachable counts as
-    # not controllable — the push would fail anyway.
-    live = {}
-    for device_id in auto_devices:
-        zone = zones.get(device_id)
-        if zone is None:
-            continue
-        try:
-            state = zone.state()
-        except BulbError:
-            continue
-        if state and state.get("on"):
-            live[device_id] = zone
+    # Which auto zones the user has ARMED. Read from the stored gate, not from
+    # the bulbs: the loop switches its own zones off when the room is bright
+    # enough, so the bulb's `on` answers "is it lit", not "may it light" (see
+    # point 0 above). Reading it back here would make the loop treat its own
+    # switch-off as the user disarming the zone, and it would never come back.
+    live = {d["id"]: zones[d["id"]] for d in auto_devices
+            if db.device_switch_on(d) and d["id"] in zones}
 
     if not live:
         # Nothing to drive. Hold the integrator instead of letting it wind up
@@ -201,6 +239,7 @@ def _one_tick() -> None:
             "target_lux": target_lux,
             "measured_lux": measured,
             "brightness": _brightness,
+            "lit": False,
         }
         return
 
@@ -238,6 +277,12 @@ def _one_tick() -> None:
     )
     _step_scale, _last_sign = result.step_scale, result.sign
 
+    # Zero brightness means the room needs no help from us, so switch the lamps
+    # off rather than leave them glowing at the Shelly's 1 % floor. The gate is
+    # stored, so this is ours to do and does not disarm the zone — the card's
+    # switch stays ON and says the lamp is waiting for the room to dim.
+    lit = result.brightness > 0
+
     # Between samples the room has not changed, so the last verdict is still the
     # true one — keep reporting it and only refresh the measured number. A
     # genuinely lost sensor does get reported.
@@ -247,7 +292,7 @@ def _one_tick() -> None:
     else:
         shown_state = result.state
         shown_detail = lighting_control.describe(
-            shown_state, target_lux=target_lux, measured_lux=measured)
+            shown_state, target_lux=target_lux, measured_lux=measured, lit=lit)
     if shown_state != status.get("state"):
         log.info("Auto lighting: %s (brightness %d/255)", shown_detail, result.brightness)
     status = {
@@ -256,11 +301,13 @@ def _one_tick() -> None:
         "target_lux": target_lux,
         "measured_lux": measured,
         "brightness": result.brightness,
+        "lit": lit,
     }
 
     # target_lux 0 means "auto lighting is off" — make no changes at all, rather
-    # than pushing zones down to their 1 % floor. With the loop not owning `on`,
-    # "disabled" has to mean "hands off".
+    # than switching every armed zone off. "Disabled" has to mean hands off, or
+    # it would be indistinguishable from auto lighting deciding the room is
+    # bright enough.
     if result.state == lighting_control.OFF_BY_SETTING:
         return
 
@@ -278,9 +325,13 @@ def _one_tick() -> None:
             return
         for device_id, zone in live.items():
             try:
-                # BRIGHTNESS ONLY — never `on`. See the ownership note at the
-                # top of lighting_control.py.
-                zone.set_state(brightness=result.brightness)
+                # Inside an ARMED zone the loop owns both. Brightness is only
+                # sent when the lamp is to be lit — at zero it would floor to
+                # the Shelly's 1 %, which is the glow we are switching off.
+                if lit:
+                    zone.set_state(on=True, brightness=result.brightness)
+                else:
+                    zone.set_state(on=False)
                 if _consecutive_failures.get(device_id):
                     log.info("Bulb zone %d reachable again", device_id)
                     _consecutive_failures[device_id] = 0

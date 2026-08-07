@@ -698,9 +698,15 @@ function lightCardDOM(device) {
 
 /* The one line under a lighting card. Ordered by what overrides what:
    a scene beats auto, and the zone's own switch beats the auto loop — it is a
-   master gate, so a zone switched off is not "waiting" for anything and must
-   not show the shared controller status, which describes the zones that ARE
-   being driven. */
+   master gate, so a disarmed zone is not "waiting" for anything and must not
+   show the shared controller status, which describes the zones that ARE being
+   driven.
+
+   `device.light.on` is the stored GATE ("may this lamp light"), not whether the
+   bulb is lit — the backend sends the gate here precisely so an armed zone
+   still reads as on while the loop keeps it dark through a bright afternoon.
+   The bulb's real state is `device.light.lit`, and the controller's own
+   sentence already spells that case out ("lamp off until it dims"). */
 function lightStatusText(device, isAuto, suppressedBy, lux) {
   if (!isAuto) return "";
   if (suppressedBy) return `Auto paused — ${suppressedBy} scene active.`;
@@ -719,10 +725,10 @@ function applyLightMode(card, mode) {
   // Brightness is disabled by mode as much as by reachability, so apply that
   // here (not just in renderLighting) — a mode-toggle click needs this to
   // take effect immediately, not wait for the next 5s poll to unlock it.
-  // On/off stays independent of mode — it's gated by reachability only, so
-  // the zone can always be switched off even while the lighting job is
-  // driving its brightness (the next auto tick may reassert brightness, but
-  // never fights an explicit on/off click).
+  // On/off stays independent of mode — it's gated by reachability only. In
+  // auto it sets the stored gate rather than the bulb directly: arming a zone
+  // hands it to the loop (which lights it only if the room needs it), and
+  // disarming one puts it out and keeps it out.
   const reachable = card.dataset.reachable === "true";
   card.querySelector(".light-power").disabled = !reachable;
   card.querySelector(".light-brightness").disabled = isAuto || !reachable;

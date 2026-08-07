@@ -553,7 +553,7 @@ Nothing is left to do here; this section records how it was settled.
 
 The two substantive decisions:
 
-- **Brightness scale.** The hub is 0–255 everywhere (`LIGHTING_AUTO_BRIGHTNESS=180`,
+- **Brightness scale.** The hub is 0–255 everywhere (`LIGHTING_AUTO_BRIGHTNESS=255`,
   the dashboard slider `min="0" max="255"`, `api.py` validation, scene seeds). Shelly
   is 1–100 %. The conversion lives **inside the client** — `_to_pct()` outbound,
   `_to_255()` inbound — and every other layer was left speaking 0–255. A hub
@@ -598,7 +598,8 @@ After the migration, set a zone's mode to `auto` from its lighting card (or
 `POST /api/devices/:id/mode {"mode":"auto"}`) to hand its brightness to the
 lux-driven job. Tune with `LIGHTING_TARGET_LUX` (default 5 lux, the level the room
 is held at) and
-`LIGHTING_AUTO_BRIGHTNESS` (default 180/255 ≈ 70 %).
+`LIGHTING_AUTO_BRIGHTNESS` (default 255/255 — full scale, so the loop only
+reports `at_max` when the bulb genuinely has nothing left to give).
 
 ### 5.5 Zone names and the empty `room` column (done)
 
@@ -815,7 +816,7 @@ SHELLY_ROOM_LED_IP=192.168.0.62
 
 LIGHTING_POLL_INTERVAL=30
 LIGHTING_TARGET_LUX=5
-LIGHTING_AUTO_BRIGHTNESS=180
+LIGHTING_AUTO_BRIGHTNESS=255
 
 HOST=0.0.0.0
 PORT=8000
@@ -1314,7 +1315,7 @@ bring-up:
 | `LIGHTING_MAX_STEP` | `16` (of 255) | Slew limit per tick |
 | `LIGHTING_SETTLE_S` | `8` (s) | A reading must be this much newer than our last change |
 | `LIGHTING_STALE_AFTER_S` | `120` (s) | Older than this = sensor lost, and reported |
-| `LIGHTING_AUTO_BRIGHTNESS` | `180` (0–255) | Applied when dark |
+| `LIGHTING_AUTO_BRIGHTNESS` | `255` (0–255) | The controller's brightness ceiling |
 | `HOST` / `PORT` | `0.0.0.0` / `8000` | |
 | `MOCK_HARDWARE` | `0` | `1` simulates serial, plugs, and zones |
 

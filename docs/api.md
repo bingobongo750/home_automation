@@ -33,7 +33,10 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
   empty (single-room hub) and kept for a future multi-room one. `wifi_plug`
   rows include `"power"` (last polled `{ts, watts, relay_on}`, or `null`).
   `bulb_zone` rows include `"mode"` (`"manual"|"auto"`) and `"light"` (live
-  `{on, brightness, color}`, or `null` if the zone is unreachable).
+  `{on, lit, brightness, color}`, or `null` if the zone is unreachable).
+  `on` is the user's stored master gate ("may this lamp light at all") and
+  `lit` is whether the bulb is actually shining — the two differ in `auto`,
+  where the job switches an armed zone off once the room is bright enough.
   One call refreshes every plug widget and lighting card.
 - `GET /devices/:id` → same per-type shape as one row above.
 - `POST /devices/:id/toggle` → *wifi_plug only.* `{"relay_on": true|false}`
@@ -55,8 +58,15 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
   Pushes a partial update to the zone and returns its resulting
   `{on, brightness, ct, color, color_mode}`. `400` on out-of-range values,
   `502` if the zone is unreachable. In `auto` mode the lighting job overwrites
-  `brightness` on its next tick, but **not `on`** — the switch is the user's
-  master gate (see below), so `{"on": false}` sticks in either mode.
+  `brightness` on its next tick.
+
+  **`on` is the user's master gate and is stored**, not merely pushed to the
+  bulb: it means "may this lamp light at all", and it sticks in either mode.
+  In `auto` the response's `on` is that gate, with the bulb's real state
+  alongside as `lit` (same split as `GET /devices`). Arming a zone the
+  controller wants dark records the gate without lighting the bulb — otherwise
+  the lamp would flash on and be switched back off a tick later; arming one it
+  wants lit brings it up at the level the loop is already holding.
 
   **`ct` vs `color` — two channels, one lit at a time.** The bulb has a
   dedicated white channel plus separate R/G/B dies. `ct` (kelvin) drives the
@@ -93,30 +103,39 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
   room at `target_lux`, capped at `LIGHTING_AUTO_BRIGHTNESS`. One controller
   drives every `auto` zone, since there is one sensor and one room.
 
-  **The job sets `brightness` only — never `on`.** The zone's on/off switch is a
-  master gate the user owns: auto drives only the zones that are switched on,
-  and a zone switched off is left off. A switched-on zone therefore bottoms out
-  at the Shelly's 1 % floor rather than going dark, since 0 is not sendable.
-  When no `auto` zone is on, the loop holds its integrator rather than winding
-  up against a room it cannot affect.
+  **The user arms a zone; the job drives it.** Those are separate, and the
+  separation is what the stored gate buys. The job only ever touches zones whose
+  gate is on, and within one of those it owns both brightness *and* the bulb's
+  on/off — when it wants no light it switches the bulb off rather than leaving
+  it at the Shelly's 1 % floor, which is a visible glow. The gate itself is
+  never written by the job (nor by a scene), so an armed zone reads as `on` all
+  afternoon with `lit: false`: that is how the dashboard shows which lamps will
+  come up when the room dims. When no `auto` zone is armed, the loop holds its
+  integrator rather than winding up against a room it cannot affect.
+
+  The job must not infer the gate from the bulb — it would be reading back its
+  own switch-off and would never light the zone again. That is why the gate is a
+  column (`devices.switch_on`) and survives restarts.
 
   `GET /devices` adds an `auto` object to each `auto` bulb row so the outcome is
   visible rather than guessed:
 
   ```json
-  "auto": {"state": "too_bright", "detail": "Room already brighter than target (315 lx vs 5 lx) — at minimum.",
-           "target_lux": 5.0, "measured_lux": 315.0, "brightness": 0}
+  "auto": {"state": "too_bright", "detail": "Room is bright enough (315 lx vs 5 lx) — lamp off until it dims.",
+           "target_lux": 5.0, "measured_lux": 315.0, "brightness": 0, "lit": false}
   ```
 
   `state` is one of `holding` (at target), `converging`, `too_bright` (ambient
-  alone exceeds the target — brightness already at 0, nothing more to give),
+  alone exceeds the target — brightness at 0 and the bulb switched off),
   `at_max` (at the brightness ceiling and still short), `off` (`target_lux` is
-  0), `no_reading`, `stale` (no lux for `LIGHTING_STALE_AFTER_S`), and
-  `zones_off`. The saturated states are normal outcomes, not errors.
+  0, meaning hands off entirely), `no_reading`, `stale` (no lux for
+  `LIGHTING_STALE_AFTER_S`), and `zones_off`. The saturated states are normal
+  outcomes, not errors. `lit` says whether the loop currently wants its armed
+  zones shining at all.
 
-  `zones_off` is reported per zone whenever that zone's switch is off — the
+  `zones_off` is reported per zone whenever that zone's gate is off — the
   controller is shared, so its own state describes the zones it is driving, and
-  claiming "converging" for a zone the user switched off would be wrong.
+  claiming "converging" for a zone the user disarmed would be wrong.
 
 ## Scenes (house modes)
 

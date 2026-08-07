@@ -125,7 +125,7 @@ class StatusShapeTestCase(unittest.TestCase):
         cls.client = app.test_client()
 
     def test_status_has_the_keys_the_dashboard_reads(self):
-        for key in ("state", "detail", "target_lux", "measured_lux", "brightness"):
+        for key in ("state", "detail", "target_lux", "measured_lux", "brightness", "lit"):
             self.assertIn(key, lighting.status)
 
     def test_auto_zone_rows_carry_the_controller_state(self):
@@ -156,12 +156,14 @@ class StatusShapeTestCase(unittest.TestCase):
 
 
 class MasterSwitchTestCase(unittest.TestCase):
-    """The on/off switch is a master gate: auto sets brightness, the user
-    decides which lamps may light at all.
+    """The on/off switch is a master gate, and it is a STORED setting: it says
+    "may this lamp light at all", which is a different question from whether the
+    bulb is lit right now. The user owns the first, the loop owns the second.
 
-    Before this, the job pushed `on=True` every tick, so switching a zone off
-    while it was in auto mode undid itself seconds later. These tests drive the
-    real loop body (one pass, no thread) against mock bulbs.
+    So a disarmed zone is never lit, and — the part that makes the switch a
+    useful readout — an armed zone whose room is already bright enough stays
+    armed with the bulb switched off. These tests drive the real loop body (one
+    pass, no thread) against mock bulbs.
     """
 
     @classmethod
@@ -178,6 +180,7 @@ class MasterSwitchTestCase(unittest.TestCase):
             conn.execute("DELETE FROM readings")
         for zone_id in self.zone_ids:
             db.set_device_mode(zone_id, "auto")
+            db.set_device_switch(zone_id, True)
             lighting.zones[zone_id].set_state(on=True, brightness=120)
         lighting._brightness = 120
         lighting._last_change_at = 0.0
@@ -185,53 +188,69 @@ class MasterSwitchTestCase(unittest.TestCase):
         lighting._step_scale, lighting._last_sign = 1.0, 0
         lighting.status = dict(lighting.status, state="holding")
         # a dark room, so the loop wants MORE light — the direction that would
-        # expose an unwanted on=True
+        # expose an unwanted on=True on a disarmed zone
         db.insert_reading("lux", 0)
 
     def tearDown(self):
         for zone_id in self.zone_ids:
             db.set_device_mode(zone_id, "manual")
+            db.set_device_switch(zone_id, True)
 
-    def test_a_switched_off_zone_is_never_turned_back_on(self):
+    def _disarm(self, zone_id):
+        """What the dashboard switch does: store the gate AND put the bulb out."""
+        db.set_device_switch(zone_id, False)
+        lighting.zones[zone_id].set_state(on=False)
+
+    def test_a_disarmed_zone_is_never_turned_back_on(self):
         for zone_id in self.zone_ids:
-            lighting.zones[zone_id].set_state(on=False)
+            self._disarm(zone_id)
         lighting._one_tick()
         for zone_id in self.zone_ids:
             self.assertFalse(lighting.zones[zone_id].state()["on"],
-                             "auto mode turned a switched-off zone back on")
+                             "auto mode turned a disarmed zone back on")
 
-    def test_a_switched_on_zone_still_gets_its_brightness_driven(self):
+    def test_an_armed_zone_still_gets_its_brightness_driven(self):
         before = lighting.zones[self.zone_ids[0]].state()["brightness"]
         lighting._one_tick()
         after = lighting.zones[self.zone_ids[0]].state()["brightness"]
         self.assertNotEqual(after, before, "brightness should have moved in a dark room")
         self.assertTrue(lighting.zones[self.zone_ids[0]].state()["on"])
 
-    def test_one_zone_off_does_not_stop_the_other(self):
+    def test_one_zone_disarmed_does_not_stop_the_other(self):
         off_id, on_id = self.zone_ids[0], self.zone_ids[1]
-        lighting.zones[off_id].set_state(on=False)
+        self._disarm(off_id)
         before = lighting.zones[on_id].state()["brightness"]
         lighting._one_tick()
         self.assertFalse(lighting.zones[off_id].state()["on"])
         self.assertNotEqual(lighting.zones[on_id].state()["brightness"], before)
 
-    def test_all_zones_off_holds_the_integrator_instead_of_winding_up(self):
+    def test_the_loop_never_reads_the_gate_back_off_the_bulb(self):
+        """The regression this whole design turns on. The loop switches an armed
+        bulb off when the room is bright; if it then inferred the gate from the
+        bulb's `on`, it would read its own switch-off as the user disarming the
+        zone and the lamp would never come back."""
+        zone = lighting.zones[self.zone_ids[0]]
+        zone.set_state(on=False)          # as if the loop had put it out
+        lighting._one_tick()              # room is dark, so it wants light again
+        self.assertTrue(zone.state()["on"], "an armed zone stayed dark in a dark room")
+
+    def test_all_zones_disarmed_holds_the_integrator_instead_of_winding_up(self):
         """Otherwise the loop integrates against a room it cannot affect, and
-        flipping a switch back on blasts whatever it wound up to."""
+        arming a zone again blasts whatever it wound up to."""
         for zone_id in self.zone_ids:
-            lighting.zones[zone_id].set_state(on=False)
+            self._disarm(zone_id)
         for _ in range(20):
             lighting._one_tick()
         self.assertEqual(lighting._brightness, 120, "integrator wound up while blind")
         self.assertEqual(lighting.status["state"], lighting_control.ZONES_OFF)
         self.assertIn("will not turn it on", lighting.status["detail"])
 
-    def test_switching_back_on_resumes_from_the_held_value(self):
+    def test_arming_again_resumes_from_the_held_value(self):
         for zone_id in self.zone_ids:
-            lighting.zones[zone_id].set_state(on=False)
+            self._disarm(zone_id)
         for _ in range(10):
             lighting._one_tick()
-        lighting.zones[self.zone_ids[0]].set_state(on=True, brightness=120)
+        db.set_device_switch(self.zone_ids[0], True)
         lighting._one_tick()
         # resumes near where it was held, not at the ceiling
         self.assertLessEqual(lighting._brightness, 120 + config.LIGHTING_MAX_STEP)
@@ -239,11 +258,16 @@ class MasterSwitchTestCase(unittest.TestCase):
 
     def _tick_with_fresh_lux(self, lux, ticks):
         """Drive several corrections. The settle guard normally allows one
-        correction per sensor sample, so feed a new sample each tick."""
+        correction per sensor sample, so feed a new sample each tick.
+
+        Timestamps continue past the last sample this helper produced rather
+        than restarting at now(): a second call has to extend the timeline, or
+        its readings sort older than the first call's and are both rejected by
+        the settle guard and passed over by latest_readings()."""
         original = config.LIGHTING_SETTLE_S
         config.LIGHTING_SETTLE_S = 0
         try:
-            base = time.time()
+            base = max(time.time(), (lighting._last_reading_ts or 0) + 1)
             for i in range(ticks):
                 with db.connect() as conn:
                     conn.execute("INSERT INTO readings (metric, ts, value) VALUES ('lux', ?, ?)",
@@ -252,33 +276,174 @@ class MasterSwitchTestCase(unittest.TestCase):
         finally:
             config.LIGHTING_SETTLE_S = original
 
-    def test_a_switched_on_zone_is_never_switched_off_by_the_loop(self):
-        """The gate cuts both ways. Driving brightness to 0 in a bright room
-        must NOT push `on=False` — that would take the switch away from the user
-        just as surely as forcing `on=True` did. The zone stays on, bottomed out.
-
-        This is the case the `live` filter alone does not cover, so it is what
-        actually pins `set_state(brightness=...)` with no `on`.
-        """
+    def test_a_bright_room_switches_an_armed_zone_off_rather_than_dimming_it(self):
+        """Brightness 0 means "emit no light", and the Shelly floors a 0 % push
+        to 1 % — so bottoming out leaves a visible glow. Switch the bulb off
+        instead."""
         zone = lighting.zones[self.zone_ids[0]]
         self._tick_with_fresh_lux(500, 30)          # far brighter than the target
         self.assertEqual(lighting._brightness, 0, "should have bottomed out")
-        state = zone.state()
-        self.assertEqual(state["brightness"], 0)
-        self.assertTrue(state["on"],
-                        "loop switched off a zone the user had switched on")
+        self.assertFalse(zone.state()["on"],
+                         "left the lamp glowing at the 1 % floor in a bright room")
         self.assertEqual(lighting.status["state"], lighting_control.TOO_BRIGHT)
+        self.assertFalse(lighting.status["lit"])
+
+    def test_a_zone_switched_off_for_brightness_stays_armed_and_comes_back(self):
+        """The point of the whole arrangement: the switch keeps reading ON
+        through a bright afternoon, so you can see which lamps will come up when
+        the room dims — and they do come up."""
+        zone_id = self.zone_ids[0]
+        self._tick_with_fresh_lux(500, 30)
+        self.assertFalse(lighting.zones[zone_id].state()["on"])
+        self.assertTrue(db.device_switch_on(db.get_device(zone_id)),
+                        "the loop disarmed a zone it merely switched off")
+
+        self._tick_with_fresh_lux(0, 3)             # night falls
+        self.assertTrue(lighting.zones[zone_id].state()["on"],
+                        "an armed zone did not come back on when the room went dark")
+        self.assertGreater(lighting.zones[zone_id].state()["brightness"], 0)
 
     def test_target_zero_touches_nothing_at_all(self):
-        """"Auto lighting off" must mean hands off — not "dim every zone to the
-        Shelly's 1 % floor", which is what pushing brightness 0 would do now
-        that the loop no longer sends `on`."""
+        """"Auto lighting off" must mean hands off — not "switch every armed
+        zone off", which would be indistinguishable from the loop deciding the
+        room is bright enough."""
         db.set_lighting({"target_lux": 0})
         lighting.zones[self.zone_ids[0]].set_state(on=True, brightness=90)
         lighting._one_tick()
         state = lighting.zones[self.zone_ids[0]].state()
         self.assertEqual(state["brightness"], 90)
         self.assertTrue(state["on"])
+
+
+class SeedBrightnessTestCase(unittest.TestCase):
+    """What the integrator starts from after a restart. A bulb keeps its
+    brightness attribute while switched off, so "the zone reports 140" does not
+    mean "the room wants 140" — it may be the level the loop last decided
+    against."""
+
+    @classmethod
+    def setUpClass(cls):
+        db.init_db()
+        for device in db.list_devices():
+            if device["type"] == "bulb_zone":
+                lighting.zones[device["id"]] = make_bulb(device["ip"])
+        cls.zone_ids = sorted(lighting.zones)
+
+    def setUp(self):
+        for zone_id in self.zone_ids:
+            db.set_device_switch(zone_id, True)
+        lighting._brightness = -1        # so the seed is unmistakably the source
+
+    def tearDown(self):
+        for zone_id in self.zone_ids:
+            db.set_device_switch(zone_id, True)
+
+    def test_a_lit_zone_seeds_its_own_brightness(self):
+        for zone_id in self.zone_ids:
+            lighting.zones[zone_id].set_state(on=True, brightness=96)
+        lighting._seed_brightness()
+        self.assertEqual(lighting._brightness, 96)
+
+    def test_armed_but_dark_zones_seed_zero_not_their_last_lit_level(self):
+        """Otherwise every restart in a bright room flashes the lamps on at the
+        level the loop had already walked away from, then walks it back down."""
+        for zone_id in self.zone_ids:
+            lighting.zones[zone_id].set_state(on=True, brightness=140)
+            lighting.zones[zone_id].set_state(on=False)   # as the loop does
+        lighting._seed_brightness()
+        self.assertEqual(lighting._brightness, 0)
+
+    def test_a_disarmed_zone_is_not_consulted(self):
+        """A disarmed zone says nothing about what the controller wanted."""
+        for zone_id in self.zone_ids:
+            db.set_device_switch(zone_id, False)
+            lighting.zones[zone_id].set_state(on=True, brightness=200)
+        lighting._seed_brightness()
+        self.assertEqual(lighting._brightness, 0)
+
+
+class GateEndpointTestCase(unittest.TestCase):
+    """POST /api/devices/:id/state carries the master gate, and in 'auto' the
+    switch the dashboard draws is that gate — not whether the bulb is lit."""
+
+    @classmethod
+    def setUpClass(cls):
+        db.init_db()
+        for device in db.list_devices():
+            if device["type"] == "bulb_zone":
+                lighting.zones[device["id"]] = make_bulb(device["ip"])
+        app = Flask(__name__)
+        app.register_blueprint(api)
+        cls.client = app.test_client()
+        cls.zone_id = sorted(lighting.zones)[0]
+
+    def setUp(self):
+        db.set_device_mode(self.zone_id, "auto")
+        db.set_device_switch(self.zone_id, True)
+        lighting._brightness = 120
+
+    def tearDown(self):
+        db.set_device_mode(self.zone_id, "manual")
+        db.set_device_switch(self.zone_id, True)
+
+    def _post_on(self, on):
+        return self.client.post(f"/api/devices/{self.zone_id}/state",
+                                json={"on": on}).get_json()
+
+    def test_the_gate_is_persisted_not_just_pushed_to_the_bulb(self):
+        self._post_on(False)
+        self.assertFalse(db.device_switch_on(db.get_device(self.zone_id)))
+        self._post_on(True)
+        self.assertTrue(db.device_switch_on(db.get_device(self.zone_id)))
+
+    def test_arming_a_zone_the_loop_wants_dark_does_not_flash_it_on(self):
+        """The controller is holding 0 (bright room), so the lamp must stay off
+        — but the switch still has to come back on, or the dashboard snaps it
+        straight back to off."""
+        lighting._brightness = 0
+        body = self._post_on(True)
+        self.assertTrue(body["on"], "the switch would snap back off")
+        self.assertFalse(body["lit"], "flashed the lamp on in a bright room")
+        self.assertFalse(lighting.zones[self.zone_id].state()["on"])
+
+    def test_arming_a_zone_the_loop_wants_lit_lights_it_at_the_held_level(self):
+        lighting._brightness = 120
+        body = self._post_on(True)
+        self.assertTrue(body["on"])
+        self.assertTrue(body["lit"])
+        self.assertEqual(lighting.zones[self.zone_id].state()["brightness"], 120)
+
+    def test_disarming_puts_the_bulb_out_immediately(self):
+        self._post_on(True)
+        body = self._post_on(False)
+        self.assertFalse(body["on"])
+        self.assertFalse(lighting.zones[self.zone_id].state()["on"])
+
+    def test_the_device_list_reports_the_gate_with_the_bulb_state_alongside(self):
+        db.set_device_switch(self.zone_id, True)
+        lighting.zones[self.zone_id].set_state(on=False)   # as if the loop had
+        rows = self.client.get("/api/devices").get_json()
+        row = next(r for r in rows if r["id"] == self.zone_id)
+        self.assertTrue(row["light"]["on"], "armed zone did not read as on")
+        self.assertFalse(row["light"]["lit"])
+        self.assertNotEqual(row["auto"]["state"], lighting_control.ZONES_OFF)
+
+    def test_a_disarmed_zone_reports_zones_off_rather_than_the_shared_status(self):
+        db.set_device_switch(self.zone_id, False)
+        rows = self.client.get("/api/devices").get_json()
+        row = next(r for r in rows if r["id"] == self.zone_id)
+        self.assertFalse(row["light"]["on"])
+        self.assertEqual(row["auto"]["state"], lighting_control.ZONES_OFF)
+
+    def test_manual_zones_report_the_bulb_itself(self):
+        """No loop driving them, so the gate and the bulb agree by construction
+        — and `on` must keep meaning the bulb, since nothing else sets it."""
+        db.set_device_mode(self.zone_id, "manual")
+        self.client.post(f"/api/devices/{self.zone_id}/state", json={"on": True})
+        rows = self.client.get("/api/devices").get_json()
+        row = next(r for r in rows if r["id"] == self.zone_id)
+        self.assertTrue(row["light"]["on"])
+        self.assertNotIn("auto", row)
 
 
 if __name__ == "__main__":

@@ -62,7 +62,10 @@ SHELLY_ROOM_LED_IP = os.environ.get("SHELLY_ROOM_LED_IP", "192.168.0.62")
 #                     own last move — and double-counting it
 LIGHTING_POLL_INTERVAL = float(os.environ.get("LIGHTING_POLL_INTERVAL", "30"))
 LIGHTING_TARGET_LUX = float(os.environ.get("LIGHTING_TARGET_LUX", "5"))
-LIGHTING_AUTO_BRIGHTNESS = int(os.environ.get("LIGHTING_AUTO_BRIGHTNESS", "180"))
+# The controller's brightness ceiling. Full scale: the loop reports `at_max`
+# when it is here and still short of target, so anything less makes the bulb
+# claim it is maxed out while it still has headroom.
+LIGHTING_AUTO_BRIGHTNESS = int(os.environ.get("LIGHTING_AUTO_BRIGHTNESS", "255"))
 LIGHTING_DEADBAND_LUX = float(os.environ.get("LIGHTING_DEADBAND_LUX", "1.0"))
 LIGHTING_GAIN = float(os.environ.get("LIGHTING_GAIN", "6.0"))
 LIGHTING_MAX_STEP = int(os.environ.get("LIGHTING_MAX_STEP", "16"))

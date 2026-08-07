@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS devices (
     room   TEXT,                    -- the hub covers a single room, so this is
                                     -- seeded empty; kept for a future multi-room hub
     mode   TEXT,                    -- bulb_zone only: manual | auto
-    locked INTEGER NOT NULL DEFAULT 0  -- wifi_plug only: 1 blocks power-off without confirmation
+    locked INTEGER NOT NULL DEFAULT 0, -- wifi_plug only: 1 blocks power-off without confirmation
+    switch_on INTEGER NOT NULL DEFAULT 1  -- bulb_zone only: the user's master on/off gate
 );
 
 CREATE TABLE IF NOT EXISTS power_readings (
@@ -178,6 +179,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE devices ADD COLUMN mode TEXT")
         if "locked" not in cols:
             conn.execute("ALTER TABLE devices ADD COLUMN locked INTEGER NOT NULL DEFAULT 0")
+        if "switch_on" not in cols:
+            # Existing zones come across armed. The gate cannot be seeded from
+            # the bulbs here (init_db runs before the clients exist), and armed
+            # is the recoverable default: a zone lights when the room goes dark
+            # and one tap switches it off again.
+            conn.execute("ALTER TABLE devices ADD COLUMN switch_on INTEGER NOT NULL DEFAULT 1")
         # legacy name from the first schema revision
         conn.execute("UPDATE devices SET name = 'Plug 1' WHERE name = 'myStrom Plug'")
         # legacy type from when the zones were WLED strips on ESP32s, before
@@ -712,6 +719,27 @@ def set_device_mode(device_id: int, mode: str) -> None:
     lighting job drives brightness from lux)."""
     with connect() as conn:
         conn.execute("UPDATE devices SET mode = ? WHERE id = ?", (mode, device_id))
+
+
+def device_switch_on(device: dict) -> bool:
+    """bulb_zone only: is the user's master on/off gate armed? Rows predating
+    the column, and every plug row, read as armed."""
+    return bool(device.get("switch_on", 1))
+
+
+def set_device_switch(device_id: int, on: bool) -> None:
+    """bulb_zone only: the user's master on/off gate — "may this lamp light at
+    all", which is a different question from whether it is lit right now.
+
+    It has to be persisted rather than read back off the bulb, because in
+    'auto' the lighting job switches the bulb itself off while the room is
+    already bright enough (see app/lighting.py). Without a stored gate a
+    restart cannot tell that apart from the user having switched the zone off,
+    and would either strand an armed zone dark or light one the user wanted
+    off."""
+    with connect() as conn:
+        conn.execute("UPDATE devices SET switch_on = ? WHERE id = ?",
+                     (1 if on else 0, device_id))
 
 
 def set_device_locked(device_id: int, locked: bool) -> None:

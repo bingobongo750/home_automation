@@ -186,23 +186,35 @@ def _bulb_state_or_none(device_id: int) -> dict | None:
         return None
 
 
+def _gated_light(light: dict | None, gate: bool) -> dict | None:
+    """In 'auto' the card's switch shows the user's stored master gate, not the
+    bulb's current on/off — the loop switches an armed bulb off while the room
+    is already bright enough, and the switch has to keep meaning "armed, will
+    light when the room dims". The physical state stays available as `lit`."""
+    if light is None:
+        return None
+    light["lit"] = bool(light.get("on"))
+    light["on"] = gate
+    return light
+
+
 def _attach_device_state(device: dict) -> dict:
     if device["type"] == "wifi_plug":
         device["power"] = db.latest_power(device["id"])
     elif device["type"] == "bulb_zone":
         device["light"] = _bulb_state_or_none(device["id"])
         # Auto-lighting controller state, so the card can say "room already
-        # brighter than target" rather than looking like it did nothing. One
+        # bright enough" rather than looking like it did nothing. One
         # controller drives every auto zone (see app/lighting.py), so this is
         # the same snapshot on each row — carried per-row because that is
         # where the dashboard already looks.
         if device.get("mode") == "auto":
-            light = device["light"]
-            if light is not None and not light.get("on"):
-                # One controller drives every auto zone, so `lighting.status`
-                # describes the zones it is ACTUALLY driving. A zone the user
-                # switched off is not one of them — the switch is a master gate
-                # — and reporting "converging" against it would be a plain lie.
+            gate = db.device_switch_on(device)
+            device["light"] = _gated_light(device["light"], gate)
+            if not gate:
+                # `lighting.status` describes the zones the controller is
+                # ACTUALLY driving. A zone the user disarmed is not one of them,
+                # and reporting "converging" against it would be a plain lie.
                 device["auto"] = {
                     **lighting.status,
                     "state": lighting_control.ZONES_OFF,
@@ -298,9 +310,14 @@ def device_state(device_id: int):
     """Set a bulb zone's brightness/colour/on-off. Body: any subset of
     {"on": bool, "brightness": 0-255, "color": [r, g, b], "ct": kelvin}.
     Brightness stays 0-255 across the whole hub — the Shelly's 1-100 % scale is
-    converted inside app/shelly_bulb.py and nowhere else. Only meaningful in
-    'manual' mode — in 'auto' mode the lighting job will overwrite
-    brightness/on on its next tick.
+    converted inside app/shelly_bulb.py and nowhere else.
+
+    `on` is the user's master gate — "may this lamp light at all" — and is
+    stored on the device row, not just pushed to the bulb. In 'auto' the
+    lighting job owns whether an armed zone is lit right now (it switches the
+    bulb off once the room is bright enough), so the gate is what comes back as
+    `on`, with the bulb's actual state alongside it as `lit`. `brightness` only
+    holds in 'manual'; in 'auto' the job reasserts its own value.
 
     `ct` drives the bulb's white channel (the ambient control, and much
     brighter); `color` drives the RGB dies (the custom-colour picker). They are
@@ -334,6 +351,26 @@ def device_state(device_id: int):
         return jsonify({"error": "send color or ct, not both — the bulb lights "
                                  "either its RGB dies or its white channel"}), 400
 
+    is_auto = device.get("mode") == "auto"
+    gate = db.device_switch_on(device)
+    if on is not None:
+        # `on` is the user's master gate — "may this lamp light at all" — and it
+        # is stored, because in 'auto' the loop switches the bulb itself off
+        # while the room is bright enough (see app/lighting.py). Record it
+        # before touching the bulb so the two can never disagree.
+        db.set_device_switch(device_id, on)
+        gate = on
+        if is_auto and on:
+            # Arming a zone while the controller wants the room dark must not
+            # flash the lamp on and straight back off a tick later. Light it now
+            # only if the loop currently wants light — and at the level it is
+            # already holding, so it comes up correct rather than at whatever
+            # the bulb happened to be left on.
+            level = lighting.commanded_brightness()
+            on = level > 0
+            if on and brightness is None:
+                brightness = level
+
     try:
         state = zone.set_state(
             on=on,
@@ -344,6 +381,13 @@ def device_state(device_id: int):
     except BulbError as exc:
         log.error("Bulb set_state failed for device %d: %s", device_id, exc)
         return jsonify({"error": str(exc)}), 502
+
+    if is_auto:
+        # Same view the device list serves: the switch reports the gate, so the
+        # dashboard does not snap it back off after arming a zone the loop is
+        # deliberately keeping dark.
+        state = _gated_light(state, gate)
+        lighting.poke()   # react now, not up to a poll interval later
     return jsonify(state)
 
 
