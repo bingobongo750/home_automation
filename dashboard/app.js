@@ -2309,7 +2309,13 @@ function showView(name) {
   }
   if (name === "planner") refreshPlanner();
   if (name === "health") refreshHealth();
-  // deep-linkable, like the widget hashes
+  // Deep-linkable, like the widget hashes — but never on a phone. Mobile
+  // Safari reopens the URL it last had, and a home-screen icon keeps whatever
+  // URL it was saved with, so writing "#planner" here quietly promotes one
+  // visit to the Planner into the phone's permanent start page. The board is
+  // the phone's landing view; the VIEW switch is how you leave it, not a
+  // preference that persists.
+  if (isPhone()) return;
   history.replaceState(null, "",
     name === "board" ? location.pathname + location.search : `#${name}`);
 }
@@ -4476,7 +4482,11 @@ document.querySelectorAll(
   // those views
   const [hash, hashRange] = location.hash.slice(1).split(":");
   if (hash === "planner" || hash === "health") {
-    showView(hash);
+    // The board is always the phone's landing view, even from a saved
+    // home-screen icon or a restored tab still carrying "#planner" from
+    // before showView() stopped writing it. The widget hashes below are not
+    // affected: those open a dialog ON the board, so they compose with it.
+    if (!isPhone()) showView(hash);
   } else if (hash === "settings") {
     openSettings();
   } else if (hash) {

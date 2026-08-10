@@ -730,12 +730,18 @@ keep this list in sync when endpoints change:
   document was considered and rejected (two dashboards to keep in step, and
   whichever one you aren't looking at is the one that rots). Everything lives in
   a single `@media (max-width: 700px)` block at the end of `styles.css`; the
-  only JS involvement is `isPhone()` in `app.js` for the three things CSS cannot
+  only JS involvement is `isPhone()` in `app.js` for the four things CSS cannot
   decide — the calendar opens on **Day**, the size/scale steppers are hidden and
   their persisted values ignored (and **not** rewritten, so a narrowed desktop
-  window can't clobber the size chosen there), and the day title shortens to
-  "Tue, 4 Aug". Keep the breakpoint in sync between the two files. Two
-  invariants:
+  window can't clobber the size chosen there), the day title shortens to
+  "Tue, 4 Aug", and **the Board is always the landing view**. That last one is
+  why `showView()` does not write `#planner`/`#health` into the URL on a phone
+  and why a view hash is ignored there at load: mobile Safari reopens the URL it
+  last had, and a home-screen icon keeps the URL it was saved with, so the
+  deep-link hash otherwise promotes one visit to the Planner into the phone's
+  permanent start page. Widget hashes (`#temp`, `#power-1`, `#settings`) are
+  unaffected — they open a dialog *on* the board. Keep the breakpoint in sync
+  between the two files. Two invariants:
   - **Nothing may make the document wider than the viewport.** A mobile browser
     answers horizontal overflow by *growing its layout viewport* to fit, which
     rescales the whole page and re-resolves `100vw` and every `position: fixed`
