@@ -98,6 +98,37 @@ def put_lighting_settings():
     return jsonify(clean)
 
 
+@api.get("/settings/electricity")
+def get_electricity_settings():
+    return jsonify(db.get_electricity())
+
+
+@api.put("/settings/electricity")
+def put_electricity_settings():
+    """Electricity tariff. Body: {"price_per_kwh": 0.32, "currency": "CHF"} —
+    what a kWh costs, used only to price the energy the plugs measured. A price
+    of 0 (or a blank field) means "tariff unknown": the plug stats then report
+    no cost at all, rather than a confident 0.00."""
+    body = request.get_json(silent=True) or {}
+    value = body.get("price_per_kwh")
+    if value is None or value == "":
+        value = 0
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return jsonify({"error": "price_per_kwh must be a number"}), 400
+    if price < 0:
+        return jsonify({"error": "price_per_kwh must be 0 or more"}), 400
+    currency = body.get("currency", config.ELECTRICITY_CURRENCY)
+    if not isinstance(currency, str):
+        return jsonify({"error": "currency must be a string"}), 400
+    currency = currency.strip()[:8] or config.ELECTRICITY_CURRENCY
+    clean = {"price_per_kwh": price, "currency": currency}
+    db.set_electricity(clean)
+    log.info("Electricity tariff updated: %s", clean)
+    return jsonify(clean)
+
+
 @api.get("/settings/sleep-schedule")
 def get_sleep_schedule():
     return jsonify(db.get_sleep_schedule())

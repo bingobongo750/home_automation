@@ -32,6 +32,17 @@ MYSTROM_PLUG_IP = os.environ.get("MYSTROM_PLUG_IP", "192.168.0.51")
 MYSTROM_PLUG2_IP = os.environ.get("MYSTROM_PLUG2_IP", "192.168.0.52")
 MYSTROM_POLL_INTERVAL = float(os.environ.get("MYSTROM_POLL_INTERVAL", "10"))
 
+# Electricity tariff — what a kWh costs, so the dashboard can price the energy
+# the plugs actually measured. These only SEED the user-owned setting (it lives
+# in the `settings` table and is edited from the gear dialog), same as
+# LIGHTING_TARGET_LUX: an untouched install shows a plausible figure instead of
+# a blank. The default is a Swiss household rate because the plugs are Swiss
+# Type J — replace it with what you actually pay, it is a placeholder, not a
+# lookup. Nothing here talks to a tariff service; the price is a constant the
+# user owns.
+ELECTRICITY_PRICE_PER_KWH = float(os.environ.get("ELECTRICITY_PRICE_PER_KWH", "0.32"))
+ELECTRICITY_CURRENCY = os.environ.get("ELECTRICITY_CURRENCY", "CHF")
+
 # Shelly bulb zones (ambient lighting) — WiFi devices, same lane as the
 # myStrom plugs above. Placeholder IPs until each bulb is physically set up.
 SHELLY_CUPBOARD_IP = os.environ.get("SHELLY_CUPBOARD_IP", "192.168.0.61")

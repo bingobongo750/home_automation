@@ -495,7 +495,7 @@ keep this list in sync when endpoints change:
 - `GET /api/devices` — list known devices (two myStrom plugs, two Shelly bulb zones); plug rows carry `power` (last polled sample), bulb rows carry `mode` and `light` (live state)
 - `GET /api/devices/:id` — device row with the same per-type fields as above
 - `POST /api/devices/:id/toggle` — turn a WiFi plug on/off
-- `GET /api/devices/:id/power/stats` — 24h/7d average draw + estimated 24h kWh
+- `GET /api/devices/:id/power/stats` — 24h/7d average draw, the energy measured over each window (`kwh_24h`/`kwh_7d`, trapezoidal over the samples that exist — never avg × duration, which bills the gaps), and what that cost at the stored tariff (`cost_24h`/`cost_7d`, plus `currency`/`price_per_kwh` so the dashboard can price a dragged selection client-side)
 - `GET /api/devices/:id/power/history` — power draw over time
 - `POST /api/devices/:id/state` — set a bulb zone's on/brightness/`ct`/color (any subset);
   brightness is 0-255 hub-wide, converted to the Shelly's 1-100% only inside `app/shelly_bulb.py`.
@@ -504,6 +504,7 @@ keep this list in sync when endpoints change:
 - `POST /api/devices/:id/mode` — set a bulb zone's mode: `manual` or `auto`
 - `GET/PUT /api/settings/thresholds` — alert thresholds (min/max per metric + plug power draw); a reading outside its band flags that widget on the dashboard
 - `GET/PUT /api/settings/lighting` — auto-lighting `target_lux`: the measured room level an `auto` zone holds (closed loop; 0 disables auto lighting). Saturation is reported per-zone, not hidden
+- `GET/PUT /api/settings/electricity` — electricity tariff (`price_per_kwh`, `currency`), seeded from `ELECTRICITY_*`. Purely a display concern: it prices the energy the plugs measured and nothing in the hub switches or schedules on it. A price of 0 means "tariff unknown" and every cost figure reports `null` rather than a confident 0.00
 - `GET/PUT /api/settings/sleep-schedule` — nightly Sleeping window (`enabled`, `sleep_time`, `wake_time` as local "HH:MM"); PUT re-arms it immediately
 - `GET /api/scenes` — house modes and their per-device target states
 - `POST /api/scenes/:name/activate` — activate a scene; body may carry `wake_time` ("HH:MM") when activating Sleeping
@@ -575,12 +576,15 @@ keep this list in sync when endpoints change:
   with the rest of that plan).
 - **Drag across any expanded chart** to select a time span and get its statistics
   (average headlined, plus min/max, the span, its duration and the sample count) in a
-  readout under the chart. **Power charts additionally show energy** (kWh, or Wh below
-  10 Wh where kWh would render as 0.00) — watts are a rate, so a span of them integrates
-  into the number you actually want off a power chart. Trapezoidal over the samples in
-  the selection, *not* avg × duration: the series is bucket-averaged and can have gaps
-  where the plug was unreachable, and avg × duration silently bills those gaps at the
-  average rate. The crosshair already answers "what was it at this moment";
+  readout under the chart. **Power charts additionally show energy and its cost**
+  (kWh, or Wh below 10 Wh where kWh would render as 0.00, then `≈ CHF x.xx` in copper) —
+  watts are a rate, so a span of them integrates into the number you actually want off a
+  power chart, and converting kWh into money is the step nobody does in their head.
+  Trapezoidal over the samples in the selection, *not* avg × duration: the series is
+  bucket-averaged and can have gaps where the plug was unreachable, and avg × duration
+  silently bills those gaps at the average rate. The cost is that kWh × the stored tariff and is marked `≈` because it is
+  a flat rate — no standing charge, no day/night tariff; it is absent entirely when no
+  tariff is set. The crosshair already answers "what was it at this moment";
   this answers "what was it across this stretch", which otherwise means eyeballing a
   line. Selection is horizontal only — the question is always about a time range, never
   a value range — and clears on a plain click, a range/metric change, or closing the
@@ -593,10 +597,17 @@ keep this list in sync when endpoints change:
   min/max/avg stats, "typical now" 7d-avg-by-time-of-day) rather than expanding in place —
   in-place expansion was rejected because it reflowed the grid out from under the cursor.
   Never make widget interaction shift the board layout.
-- A settings dialog (gear icon) with three sections: **Alert thresholds** (min/max band
+- A settings dialog (gear icon) with four sections: **Alert thresholds** (min/max band
   per metric and plug power draw — a reading outside its band flags that widget on the
-  board), **Auto lighting** (the `target_lux` setpoint), and **Nightly sleep** (the recurring
-  Sleeping window). Each section posts to its own endpoint on save.
+  board), **Electricity cost** (price per kWh + currency), **Auto lighting** (the
+  `target_lux` setpoint), and **Nightly sleep** (the recurring Sleeping window). Each
+  section posts to its own endpoint on save.
+- **A power widget's cost lives under the energy it came from**, as a `.stat-sub` line
+  beneath `Energy 24h` / `Energy 7d`, not as a tile of its own — it is that same number
+  times the tariff, and splitting them leaves you comparing a kWh in one corner with a
+  franc in another. Both windows print to the same number of decimals (chosen from the
+  smaller figure, which is the one at risk of rounding to zeros) so the pair reads as a
+  pair.
 - Chart y-axes never run negative except temperature — humidity, lux, CO2 and watts
   have no negative values, so `METRICS.allowNegative` gates the axis padding and
   everything else clamps at 0.

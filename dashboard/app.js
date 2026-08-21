@@ -337,10 +337,17 @@ function plugPairDOM(device) {
           <button class="range-btn" data-range="7d">7d</button>
         </div>
         <div class="chart chart-tall"></div>
-        <dl class="stat-row">
+        <!-- Cost is a sub-line under the energy it was computed from, not a
+             tile of its own: it is that same number times the stored tariff,
+             and separating them leaves you comparing a kWh in one corner with
+             a franc in another. Empty (and invisible) until a tariff is set. -->
+        <dl class="stat-row stat-row-power">
           <div><dt>Avg 24h</dt><dd data-stat="avg_24h_w">—</dd></div>
-          <div><dt>Energy 24h</dt><dd data-stat="kwh_24h">—</dd></div>
+          <div><dt>Energy 24h</dt><dd data-stat="kwh_24h">—</dd>
+               <div class="stat-sub" data-sub="cost_24h"></div></div>
           <div><dt>Avg 7d</dt><dd data-stat="avg_7d_w">—</dd></div>
+          <div><dt>Energy 7d</dt><dd data-stat="kwh_7d">—</dd>
+               <div class="stat-sub" data-sub="cost_7d"></div></div>
         </dl>
       </div>
     </article>`;
@@ -900,6 +907,8 @@ const settingsOverlay = document.getElementById("settings-overlay");
 const settingsForm = document.getElementById("settings-form");
 const saveNote = document.getElementById("save-note");
 const targetLuxInput = document.getElementById("target-lux-input");
+const priceKwhInput = document.getElementById("price-kwh-input");
+const currencyInput = document.getElementById("currency-input");
 const sleepEnabledInput = document.getElementById("sleep-enabled-input");
 const sleepFromInput = document.getElementById("sleep-from-input");
 const sleepToInput = document.getElementById("sleep-to-input");
@@ -924,16 +933,19 @@ async function openSettings() {
   // Fetched on open rather than kept in the poll loop — neither changes
   // except from this dialog, so there's nothing to keep live.
   try {
-    const [lighting, schedule] = await Promise.all([
+    const [lighting, schedule, electricity] = await Promise.all([
       getJSON("/api/settings/lighting"),
       getJSON("/api/settings/sleep-schedule"),
+      getJSON("/api/settings/electricity"),
     ]);
     targetLuxInput.value = lighting.target_lux;
     sleepEnabledInput.checked = !!schedule.enabled;
     sleepFromInput.value = schedule.sleep_time;
     sleepToInput.value = schedule.wake_time;
+    priceKwhInput.value = electricity.price_per_kwh;
+    currencyInput.value = electricity.currency;
   } catch {
-    saveNote.textContent = "Couldn't load lighting/sleep settings.";
+    saveNote.textContent = "Couldn't load lighting/sleep/tariff settings.";
     saveNote.className = "save-note err";
   }
 }
@@ -970,6 +982,10 @@ settingsForm.addEventListener("submit", async (ev) => {
       enabled: sleepEnabledInput.checked,
       sleep_time: sleepFromInput.value,
       wake_time: sleepToInput.value,
+    });
+    await putJSON("/api/settings/electricity", {
+      price_per_kwh: priceKwhInput.value.trim() === "" ? 0 : Number(priceKwhInput.value),
+      currency: currencyInput.value.trim(),
     });
     saveNote.textContent = "Saved.";
     saveNote.className = "save-note ok";
@@ -1394,6 +1410,39 @@ function setStat(widget, name, value, unit) {
   }
 }
 
+// The small line under a stat tile (currently the cost under an energy figure).
+// Blank text hides it, so a hub with no tariff set shows nothing rather than an
+// empty row of dashes.
+function setStatSub(widget, name, text) {
+  const sub = widget._detail.querySelector(`.stat-sub[data-sub="${name}"]`);
+  if (!sub) return;
+  sub.textContent = text || "";
+  sub.hidden = !text;
+}
+
+/* How many decimals a cost prints at.
+
+   It slides because one formatter serves both a week of a fridge and a
+   three-hour drag across a standby load: two decimals would render every short
+   span as 0.00 and read as broken, the same reason the energy figure itself
+   drops from kWh to Wh below 10.
+
+   Given several amounts it picks ONE precision for all of them — the 24h and 7d
+   tiles sit side by side and want to read as a pair, and the figure at risk of
+   rounding away to zeros is the smaller one. */
+function costDigits(...amounts) {
+  const vals = amounts.filter((a) => Number.isFinite(a) && a !== 0).map(Math.abs);
+  if (!vals.length) return 2;
+  const smallest = Math.min(...vals);
+  return smallest >= 1 ? 2 : smallest >= 0.01 ? 3 : 4;
+}
+
+// Money, from a kWh figure and the stored tariff.
+function formatCost(amount, currency, digits) {
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) return null;
+  return `${currency || ""} ${amount.toFixed(digits ?? costDigits(amount))}`.trim();
+}
+
 function secondsSinceMidnight() {
   const d = new Date();
   return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
@@ -1461,10 +1510,20 @@ async function loadDetail(widget) {
           // watts integrate into energy; a dragged span on this chart should
           // answer "what did that cost me", not just "what was the average draw"
           energy: true,
+          // The tariff rides along on the stats payload so the selection can be
+          // priced in the browser, off the points already plotted — the span is
+          // arbitrary and only the client knows where it was dragged.
+          tariff: { price: stats.price_per_kwh, currency: stats.currency },
           thresholds: thresholds ? thresholds.power : null });
       setStat(widget, "avg_24h_w", stats.avg_24h_w, "W");
+      // One precision across both windows — they are the same figure at two
+      // scales and mismatched decimals make them look like different quantities.
+      const cd = costDigits(stats.cost_24h, stats.cost_7d);
       setStat(widget, "kwh_24h", stats.kwh_24h, "kWh");
+      setStatSub(widget, "cost_24h", formatCost(stats.cost_24h, stats.currency, cd));
       setStat(widget, "avg_7d_w", stats.avg_7d_w, "W");
+      setStat(widget, "kwh_7d", stats.kwh_7d, "kWh");
+      setStatSub(widget, "cost_7d", formatCost(stats.cost_7d, stats.currency, cd));
     } else if (kind === "nights") {
       // Its own range/metric buttons drive it (see loadNights); the generic
       // range machinery does not apply. Always reopen on the list, never on
@@ -1801,6 +1860,18 @@ function drawChart(container, points, opts) {
       // Below ~10 Wh, kWh renders as 0.00 and looks broken; show Wh instead.
       energy.textContent = wh < 10 ? `${wh.toFixed(1)} Wh` : `${kwh.toFixed(3)} kWh`;
       readout.append(energy);
+
+      // What that stretch cost. Same kWh, times the stored tariff — the point
+      // of dragging across a power chart is usually "what did running that
+      // thing cost me", and converting kWh to money in your head is the step
+      // nobody does. Marked "≈" because it is a flat tariff, not a meter: no
+      // standing charge, no day/night rate. Absent when no tariff is set.
+      if (opts.tariff && opts.tariff.price) {
+        const money = document.createElement("span");
+        money.className = "tt-value tt-cost";
+        money.textContent = `≈ ${formatCost(kwh * opts.tariff.price, opts.tariff.currency)}`;
+        readout.append(money);
+      }
     }
 
     readout.append(

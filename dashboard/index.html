@@ -584,6 +584,16 @@
         <label>max <input type="number" step="any" data-key="power" data-bound="max"></label>
       </div>
 
+      <h4 class="settings-section">Electricity cost</h4>
+      <p class="settings-hint">What a kilowatt-hour costs you. Used only to price the
+         energy the plugs actually measured — a flat rate, so no standing charge and
+         no day/night tariff. Set it to 0 to hide cost figures entirely.</p>
+      <div class="threshold-row">
+        <span class="th-label">Price <span class="th-unit">per kWh</span></span>
+        <label>rate <input type="number" min="0" step="0.01" id="price-kwh-input"></label>
+        <label>currency <input type="text" maxlength="8" id="currency-input" placeholder="CHF"></label>
+      </div>
+
       <h4 class="settings-section">Auto lighting</h4>
       <p class="settings-hint">A zone in auto mode holds the room at this measured
          brightness, dimming as daylight takes over and switching off once the room

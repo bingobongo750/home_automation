@@ -45,11 +45,25 @@ lighting, a Shelly Multicolor Bulb E27 Gen3 per zone — see "Lighting" below).
   `{"device_id": ..., "points": [{"ts", "watts"}, ...]}` — same range/
   downsampling rules as sensor history.
 - `GET /devices/:id/power/stats` → *wifi_plug only.*
-  `{"avg_24h_w", "kwh_24h", "avg_7d_w"}` — `kwh_24h` is average draw
-  integrated over the hours actually covered by samples, so it's an
-  estimate (≈) rather than metered energy. The dashboard's drag-to-select on a
-  power chart computes the same quantity for an arbitrary span, trapezoidally
-  over the samples inside it — the two agree to rounding on a known series.
+  `{"avg_24h_w", "kwh_24h", "cost_24h", "avg_7d_w", "kwh_7d", "cost_7d",
+  "currency", "price_per_kwh"}`.
+
+  **Energy is trapezoidal over the samples that exist**, never average watts ×
+  wall-clock duration: the plug is polled every `MYSTROM_POLL_INTERVAL` seconds
+  and the series has holes wherever it was unreachable, which avg × duration
+  silently bills at the average rate. Gaps wider than `db.ENERGY_MAX_GAP_S`
+  (6 polls) are dropped rather than bridged, so a hole under-reports instead of
+  inventing energy. It is still an estimate (≈) rather than metered energy, and
+  it is the same rule the dashboard's drag-to-select applies to an arbitrary
+  span — the two agree to rounding on a known series.
+
+  **Cost is that energy × the stored tariff** (`GET /settings/electricity`) and
+  nothing more: no standing charge, no day/night rate, no VAT. `currency` and
+  `price_per_kwh` ride along so the dashboard can price a dragged selection
+  client-side without a second round trip. A tariff of `0` means "not told",
+  and both `cost_*` come back `null` rather than a confident `0.0`. Any figure
+  is `null` when the window holds fewer than two usable samples — no data and
+  "drew nothing" are different answers.
 
 ## Lighting (bulb zones)
 
@@ -446,6 +460,13 @@ stage `stages` (for the hypnogram), and the night's `subjective` rating:
 - `PUT /settings/lighting` → same shape. `0` is allowed and means "auto mode
   never lights the room"; negative or non-numeric is 400. Pokes the lighting job
   so the change lands on the next tick rather than up to an interval later.
+- `GET /settings/electricity` → `{"price_per_kwh": 0.32, "currency": "CHF"}` —
+  what a kilowatt-hour costs. Purely a display concern: it prices the energy the
+  plugs measured and nothing else in the hub reads it. Seeded from
+  `ELECTRICITY_PRICE_PER_KWH` / `ELECTRICITY_CURRENCY`.
+- `PUT /settings/electricity` → same shape. `0` (or a blank `price_per_kwh`) is
+  allowed and means "tariff unknown" — plug stats then report no cost at all.
+  Negative or non-numeric is 400; `currency` is free text, trimmed to 8 chars.
 - `GET /settings/sleep-schedule` →
   `{"enabled": true, "sleep_time": "00:00", "wake_time": "09:30"}` — the
   recurring nightly Sleeping window, local "HH:MM".

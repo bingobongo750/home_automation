@@ -330,6 +330,26 @@ def set_lighting(settings: dict) -> None:
     set_setting("lighting", settings)
 
 
+# Electricity tariff, user-owned via the dashboard's settings dialog. Purely a
+# display concern: nothing in the hub bills, schedules or switches on price —
+# it turns the plugs' measured kWh into the number you actually care about.
+# ELECTRICITY_* seeds a fresh install (see config.py); `price_per_kwh` of 0
+# means "I have not told you my tariff", and every cost figure is then reported
+# as None rather than as a confident 0.00.
+def get_electricity() -> dict:
+    """Saved tariff, falling back to the ELECTRICITY_* env seeds."""
+    saved = get_setting("electricity") or {}
+    price = saved.get("price_per_kwh")
+    if price is None:
+        price = config.ELECTRICITY_PRICE_PER_KWH
+    currency = saved.get("currency") or config.ELECTRICITY_CURRENCY
+    return {"price_per_kwh": float(price), "currency": str(currency)}
+
+
+def set_electricity(settings: dict) -> None:
+    set_setting("electricity", settings)
+
+
 # Nightly Sleeping window, applied by app/scenes.py. `sleep_time` activates
 # Sleeping, `wake_time` hands back to Home (with the usual morning summary) —
 # both plain local "HH:MM", both editable from the dashboard's settings dialog.
@@ -546,14 +566,57 @@ def metric_stats(metric: str) -> dict:
     }
 
 
+# Longest gap between two samples that energy is still integrated across. The
+# poller writes one row every MYSTROM_POLL_INTERVAL seconds, so anything much
+# wider than that is the plug having been unreachable (or the hub down), and we
+# genuinely do not know what it drew — bridging it would invent energy at
+# whatever rate happened to sit either side of the hole. Skipping it
+# under-reports instead, which is the honest direction for a gap.
+ENERGY_MAX_GAP_S = max(config.MYSTROM_POLL_INTERVAL * 6, 60.0)
+
+
+def power_energy_wh(conn: sqlite3.Connection, device_id: int, since: float) -> float | None:
+    """Watt-hours drawn in a window, integrated TRAPEZOIDALLY over the samples
+    that exist — never average watts x wall-clock duration.
+
+    This is the same rule the dashboard's drag-to-select uses on a power chart,
+    and it is the reason the two agree: watts are a rate, the series has holes
+    where the plug was off the network, and avg x duration silently bills those
+    holes at the average rate. The trapezoid only ever integrates between two
+    real samples, and gaps wider than ENERGY_MAX_GAP_S are dropped entirely.
+
+    None (not 0.0) when the window holds fewer than two usable samples: no data
+    and "drew nothing" are different answers.
+    """
+    row = conn.execute(
+        """SELECT SUM((w + prev_w) / 2.0 * dt / 3600.0) AS wh FROM (
+               SELECT watts AS w,
+                      LAG(watts) OVER (ORDER BY ts) AS prev_w,
+                      ts - LAG(ts) OVER (ORDER BY ts) AS dt
+                 FROM power_readings
+                WHERE device_id = ? AND ts >= ? AND watts IS NOT NULL)
+           WHERE prev_w IS NOT NULL AND dt > 0 AND dt <= ?""",
+        (device_id, since, ENERGY_MAX_GAP_S),
+    ).fetchone()
+    return row["wh"]
+
+
 def power_stats(device_id: int) -> dict:
-    """24h/7d average draw plus an estimated 24h energy figure (average watts
-    integrated over the hours actually covered by samples)."""
+    """24h/7d average draw, the energy actually measured over each window, and
+    what that energy cost at the user's stored tariff.
+
+    Cost is `kwh x price_per_kwh` and nothing more — no standing charge, no
+    day/night tariff, no VAT handling. It exists to answer "what is this plug
+    costing me", so it rides on the same window as the energy above it rather
+    than being a separate report. `currency`/`price_per_kwh` come back with it
+    so the dashboard can price a dragged chart selection client-side without a
+    second round trip.
+    """
     now = time.time()
+    tariff = get_electricity()
     with connect() as conn:
         day = conn.execute(
-            """SELECT AVG(watts) AS av, MAX(ts) - MIN(ts) AS span
-               FROM power_readings
+            """SELECT AVG(watts) AS av FROM power_readings
                WHERE device_id = ? AND ts >= ? AND watts IS NOT NULL""",
             (device_id, now - 86400),
         ).fetchone()
@@ -562,14 +625,28 @@ def power_stats(device_id: int) -> dict:
                WHERE device_id = ? AND ts >= ? AND watts IS NOT NULL""",
             (device_id, now - 7 * 86400),
         ).fetchone()
-    kwh = None
-    if day["av"] is not None:
-        hours = min((day["span"] or 0) / 3600, 24)
-        kwh = round(day["av"] * hours / 1000, 3)
+        wh_24h = power_energy_wh(conn, device_id, now - 86400)
+        wh_7d = power_energy_wh(conn, device_id, now - 7 * 86400)
+
+    price = tariff["price_per_kwh"]
+
+    def kwh(wh):
+        return round(wh / 1000, 3) if wh is not None else None
+
+    def cost(wh):
+        # A zero tariff means the user has not said what they pay, so there is
+        # no cost to report — not a free kilowatt-hour.
+        return round(wh / 1000 * price, 4) if wh is not None and price else None
+
     return {
         "avg_24h_w": round(day["av"], 1) if day["av"] is not None else None,
-        "kwh_24h": kwh,
+        "kwh_24h": kwh(wh_24h),
+        "cost_24h": cost(wh_24h),
         "avg_7d_w": round(week["av"], 1) if week["av"] is not None else None,
+        "kwh_7d": kwh(wh_7d),
+        "cost_7d": cost(wh_7d),
+        "currency": tariff["currency"],
+        "price_per_kwh": price,
     }
 
 

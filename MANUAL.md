@@ -649,7 +649,7 @@ should pass.
 | 4 | History accumulates | leave it an hour, open a widget | Chart has a real curve |
 | 5 | Coffee-machine plug reachable | dashboard toggle | Load switches; wattage changes |
 | 6 | Desk plug reachable | dashboard toggle | As above |
-| 7 | Power history | expand a plug widget | 24 h series + kWh estimate |
+| 7 | Power history | expand a plug widget | 24 h series + 24 h/7 d kWh, each with its cost at the tariff set in the gear dialog (set the tariff to 0 to hide costs) |
 | 8 | Thresholds | gear icon, narrow the temp band | Widget flags immediately |
 | 9 | Scenes | header MODE → Away | Unlocked plugs off; locked ones reported skipped |
 | 10 | Locked plug honored | lock one, activate Away | It stays on |

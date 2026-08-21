@@ -2034,6 +2034,10 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   color: var(--muted);
 }
 .chart-selection .tt-value { color: var(--ink); font-size: 13px; font-weight: 600; }
+/* On a power chart the cost is the figure the drag was actually for, so it
+   takes the copper accent; the average and the energy it derives from stay
+   plain ink beside it. */
+.chart-selection .tt-cost { color: var(--copper); }
 
 /* The chart is a drag surface now, so say so and stop text selection fighting
    it. touch-action: pan-y splits the gesture on a phone — a vertical swipe
@@ -2272,6 +2276,17 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
      nav group is the one that can afford to be narrower than the HIG floor in
      its horizontal axis, since ‹ › are 44px tall and side by side */
   .cal-nav .nav-btn { min-width: 38px; }
+
+  /* ---- power: keep each window's tiles together ----
+     The power detail's four tiles are two pairs — a window's average beside the
+     energy it produced, with that energy's cost underneath. auto-fit lands three
+     across at 393px and strands Energy 7d on a row of its own, splitting the
+     pair; two columns puts one window per line.
+
+     The class sits on the <dl> rather than being scoped to .power-widget
+     because openDetail() moves .widget-detail out of the widget and into the
+     overlay — a descendant selector stops matching exactly when it is open. */
+  .stat-row-power { grid-template-columns: repeat(2, 1fr); }
 
   /* ---- health: readouts sitting in 48px-gapped flex rows would overflow ---- */
   .vitals-readout, .sd-target-times, .sd-cons-avg { gap: 24px; flex-wrap: wrap; }
