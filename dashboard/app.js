@@ -1478,17 +1478,29 @@ async function loadDetail(widget) {
       setStat(widget, "avg_24h", stats.avg_24h, m.unit);
       setStat(widget, "typical_now", typicalNow, m.unit);
 
-      // On the 3h and 24h views, overlay the typical-day curve mapped onto
-      // the rolling window (each time-of-day occurs exactly once in 24h;
-      // drawChart clips it to the visible span).
+      // On the 3h and 24h views, overlay the typical-day curve.
+      //
+      // The profile is a CYCLIC function of time of day, so it has to be tiled
+      // across the neighbouring days rather than mapped into the last 24 h.
+      // Mapping each bucket to "the most recent time it occurred" left the
+      // newest point up to a whole bucket (30 min) short of now and gave the
+      // curve nothing to draw past it, so the overlay stopped visibly before
+      // the right-hand edge — a sixth of the width on a 3 h chart. Tiling gives
+      // it points beyond both edges; drawChart then clips it to the exact
+      // boundaries, interpolating a point on each.
+      //
+      // Four days covers any window this overlay is shown on: day 0 alone can
+      // fall short at the left just after local midnight, and day +1 is what
+      // carries the curve up to now.
       let overlaySeries = null;
       if ((range === "3h" || range === "24h") && profile.points.length >= 2) {
-        const now = Date.now() / 1000;
+        const midnight = Date.now() / 1000 - nowTod;   // local midnight, epoch seconds
         overlaySeries = {
           label: "Typical day (7d avg)",
-          points: profile.points
-            .map((p) => ({ ts: now - ((nowTod - p.tod + 86400) % 86400), value: p.value }))
-            .sort((a, b) => a.ts - b.ts),
+          points: [-2, -1, 0, 1]
+            .flatMap((day) => profile.points.map(
+              (p) => ({ ts: midnight + day * 86400 + p.tod, value: p.value })))
+            .sort((a, b) => a.ts - b.ts),   // clipSeries needs them in order
         };
       }
       renderLegend(detail, m.color, overlaySeries, `Last ${range}`);
@@ -1625,6 +1637,33 @@ function refreshAllSparks() {
 
 const tooltip = document.getElementById("chart-tooltip");
 
+/* The part of a series inside [lo, hi], with a point interpolated exactly ON
+   each boundary wherever a segment crosses it.
+
+   Plain filtering is what leaves a line short of the edge: it keeps only the
+   samples that fall inside, so the curve starts and ends at whichever sample
+   happened to land there — up to a whole bucket in from the frame on a
+   bucket-averaged series. Interpolating the crossing puts the line on the edge
+   itself. Assumes `pts` is sorted by ts. */
+function clipSeries(pts, lo, hi) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], prev = pts[i - 1];
+    // A segment can cross both edges at once when the window sits inside a
+    // single gap, so test them independently and sort at the end.
+    if (prev) {
+      for (const edge of [lo, hi]) {
+        if (prev.ts < edge && p.ts > edge) {
+          const f = (edge - prev.ts) / (p.ts - prev.ts);
+          out.push({ ts: edge, value: prev.value + (p.value - prev.value) * f });
+        }
+      }
+    }
+    if (p.ts >= lo && p.ts <= hi) out.push(p);
+  }
+  return out.sort((a, b) => a.ts - b.ts);
+}
+
 function drawChart(container, points, opts) {
   container.textContent = "";
   // A selection belongs to the chart that produced it — switching range or
@@ -1702,10 +1741,11 @@ function drawChart(container, points, opts) {
     label.textContent = axisTime(ts, xSpan);
   }
 
-  // typical-day overlay: same hue, de-emphasized, under the main line
-  const overlayPts = overlay
-    ? overlay.points.filter((p) => p.ts >= xMin && p.ts <= xMax)
-    : [];
+  // typical-day overlay: same hue, de-emphasized, under the main line.
+  // Clipped, not filtered — it is a continuous quantity and belongs across the
+  // whole window, so it has to be cut exactly at the edges rather than at
+  // whichever bucket happened to land inside them.
+  const overlayPts = overlay ? clipSeries(overlay.points, xMin, xMax) : [];
   if (overlayPts.length >= 2) {
     el("path", { d: pathD(overlayPts), fill: "none", stroke: opts.color,
                  opacity: 0.4, "stroke-width": 2,

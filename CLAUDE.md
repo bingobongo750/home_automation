@@ -589,6 +589,16 @@ keep this list in sync when endpoints change:
   line. Selection is horizontal only — the question is always about a time range, never
   a value range — and clears on a plain click, a range/metric change, or closing the
   overlay, since a selection belongs to the chart that produced it.
+- The **"typical day" overlay spans the whole frame**, edge to edge. It is a 7d average
+  per time-of-day bucket — a *cyclic* function with a 24h period, and a continuous
+  quantity — so it is tiled across neighbouring days and then **clipped, not filtered**,
+  with a point interpolated exactly on each boundary. Both halves matter: mapping each
+  bucket to "the most recent time it occurred" left the newest point up to a whole
+  bucket short of now, and filtering to `ts >= xMin && ts <= xMax` then started and
+  ended the line at whichever bucket happened to fall inside. Together they cut the
+  curve visibly short of both edges — as much as a sixth of the width on a 3h chart,
+  varying with where the clock sat inside the current bucket. `clipSeries()` in
+  `app.js` is the boundary-interpolating clip.
 - Every detail chart opens on **3h** (`DEFAULT_DETAIL_RANGE`), **every time** — the range
   resets on open rather than persisting. A 7d frame picked while reading CO2 must not
   silently become how the next metric is read; the axis label is easy to miss, and
