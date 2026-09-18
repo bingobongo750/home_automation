@@ -921,31 +921,54 @@ the access control, as decided in `CLAUDE.md`.
 The database is the only irreplaceable thing on the box, and SD cards fail at exactly
 this workload: sustained small writes, ~17 000 commits a day, indefinitely. They
 usually go without warning. A backup sitting on the same card is worth nothing when
-that happens, which is why the second cron line below matters as much as the first.
+that happens, which is why the second hop below matters as much as the first.
 
 `.backup`, never `cp` — the DB runs in WAL mode and a plain copy of a live file can be
 inconsistent.
 
-```bash
-mkdir -p ~/backups
-ssh-keygen -t ed25519          # if the Pi has no key yet
-ssh-copy-id <you>@<mac>        # so the nightly copy runs unattended
-crontab -e
-```
+**Hop 1 — a rolling week on the card.** Pi, cron, live since bring-up:
 
 ```cron
-15 4 * * * /usr/bin/sqlite3 /home/<user>/home_automation/data/home.db ".backup /home/<user>/backups/home-$(date +\%u).db"
-30 4 * * * /usr/bin/scp -q /home/<user>/backups/home-$(date +\%u).db <you>@<mac>:~/hub-backups/
+15 4 * * * /usr/bin/sqlite3 /home/louis/home_automation/data/home.db ".backup /home/louis/backups/home-$(date +\%u).db"
 ```
 
-The first keeps a rolling week on the card (`%u` is the weekday number); the second
-puts last night's copy somewhere that survives the card dying. The Mac needs **Remote
-Login** on (System Settings → General → Sharing) and needs to be awake at 04:30 — if it
-usually is not, move the second line to a time you are actually at the machine.
+`%u` is the weekday number, so this self-rotates over seven files with no cleanup
+logic and no unbounded growth.
 
-> **Check that it is arriving.** A silently failing `scp` — asleep Mac, changed host
-> key, full disk — looks exactly like a working backup from the Pi's side. Look in
-> `~/hub-backups/` on the Mac now and then, and confirm the timestamps move.
+**Hop 2 — off the card entirely.** Installed 17 Sep 2026, and **pulled by the Mac
+rather than pushed by the Pi**:
+
+| | |
+|---|---|
+| Script | `~/bin/hub-backup.sh` (on the Mac) |
+| Agent | `~/Library/LaunchAgents/com.louis.hub-backup.plist`, daily 05:00 |
+| Lands in | `~/hub-backups/hub-YYYY-MM-DD.db`, 7 kept |
+| Log | `~/Library/Logs/hub-backup.log` |
+
+Three decisions in that, all worth keeping:
+
+- **Pull, not push.** A push needs **Remote Login** enabled on the Mac; the pull
+  reuses the key the Mac already holds for the Pi and opens no inbound SSH on the
+  laptop at all. It also survives the Mac's address changing — which it already has.
+  The address this section used to hardcode, `192.168.0.91`, is not where the Mac
+  lives any more, so the documented push command would have failed even with Remote
+  Login on.
+- **launchd, not cron.** This Mac sleeps, and cron silently skips a job whose time
+  passed while the machine was asleep. That is exactly how you come to believe you
+  have had backups for months without having any. launchd re-runs a missed
+  `StartCalendarInterval` job on the next wake.
+- **Verify before keeping.** The script runs `pragma integrity_check` on the copy and
+  discards it if it fails. A truncated copy is worse than none — it looks like a
+  backup right up until the morning you need it.
+
+To go back to the push design instead: enable Remote Login on the Mac (System
+Settings → General → Sharing), authorise the Pi's key, and add a second cron line on
+the Pi pointing at the Mac's *current* address.
+
+> **Check that it is arriving.** A silently failing copy — asleep Mac, changed host
+> key, changed address, full disk — looks exactly like a working backup from the far
+> side. Glance at `~/hub-backups/` and the tail of `hub-backup.log` now and then, and
+> confirm the timestamps move.
 
 ### 7.10 Health data ingest
 
@@ -1003,7 +1026,7 @@ the answer to "what was left?" months from now.
 
 **Done** — §7.1 image · §7.2 first boot + journal cap · §7.3 code + venv · §7.4 serial
 by-id, `dialout` · §7.5 `.env` · §7.7 service (reboot-tested) · §7.8 Tailscale · §7.9
-*on-card half* of backups.
+backups, **both hops** (on-card cron + off-box launchd pull, 17 Sep 2026).
 
 **§7.8 in full:** the Pi joined as `hub` with **key expiry disabled**, so it cannot
 silently drop off the tailnet the way a default ~180-day node key would (it would keep
@@ -1015,27 +1038,58 @@ try to upgrade or search a bare `hub:8000`.
 Started fresh rather than migrating the Mac's database (§7.6) — the Pi reseeded its
 `devices` rows from `.env` on first run.
 
+**16–17 Sep 2026 — three hard power losses, and the logging blind spot they exposed.**
+After 19 days of unbroken uptime (zero gaps in `readings` across a two-week absence)
+the Pi dropped out three times in 25 hours — 16 Sep 20:17, 16 Sep 23:00, 17 Sep
+20:10 — twice coming back for only a few minutes before going again. Every one was an
+abrupt loss rather than a crash: ext4 logged `orphan cleanup on readonly fs` on each
+boot, the box left the ARP table entirely, and the sensor rows run clean to the final
+sample and then simply stop. Card, heat, RAM, packages and the smart plugs were all
+ruled out — `integrity_check ok`, no I/O errors, 45 °C, `throttled=0x0`, no apt
+history at all, and the Pi ran happily through the 16 Sep outages while *both* plugs
+were switched off. Attributed to a faulty mains plug on the PSU.
+
+The more durable lesson is the second one: **none of it was diagnosable afterwards.**
+Raspberry Pi OS ships `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf`,
+pinning the journal to RAM to spare the card — so each crash erased its own evidence
+on reboot and `journalctl --list-boots` never showed more than the current boot.
+Overridden 17 Sep by `/etc/systemd/journald.conf.d/50-persistent.conf`
+(`Storage=persistent`, capped 100M / 1 month); delete that one file to revert. The
+extra writes are negligible beside the hub's own ~17 000 commits a day, which is what
+actually wears the card. After any future incident **`journalctl -b -1 -p warning` is
+now the first thing to read** — an `Under-voltage detected` line there would confirm
+supply trouble rather than leaving it inferred.
+
+A related gap worth not repeating: the Pi's clock has no battery. On a cold boot it
+restores the last saved timestamp and NTP corrects it a moment later, so `uptime`,
+`systemctl status` and early journal lines disagree until the jump lands. During this
+incident `systemctl status homehub` claimed 1 h 9 min of uptime on a box that had
+been running for 40 seconds.
+
+**Every unclean reboot therefore writes junk rows, and they need clearing.** The hub
+starts logging under that restored clock, so roughly two minutes of `readings` and
+`power_readings` land with timestamps ~50-60 s in the **past**, overlapping rows
+already stored. Both tables then run backwards across the seam and every chart draws a
+kink. The values are real measurements — only the timestamps are wrong, and the true
+times are not recoverable (boot time is itself known only from the bad clock), so they
+are deleted rather than corrected. The 18 Sep 10:29 reboot produced 20 such rows in
+`readings` (3540892-3540911) and 4 in `power_readings` (757514-757517), removed with an
+exact-undo file at `~/home_automation/data/deleted_readings_20260918.sql` — same
+treatment as the 4 Aug and 23 Aug bus dropouts. To find them after any future reboot:
+
+```sql
+WITH s AS (SELECT id, ts, MAX(ts) OVER (ORDER BY id
+             ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) mx
+           FROM readings)
+SELECT * FROM s WHERE ts < mx;      -- and the same over power_readings
+```
+
+Check the undo file actually round-trips before trusting it: restore it into a scratch
+`.backup` copy, re-emit the rows with `.mode insert`, and `diff` the two.
+
 **Still outstanding**
 
-1. **Off-box backup (§7.9)** — the on-card rolling weekly `.backup` cron is live and
-   tested. The second cron line, the one that matters when the card dies, is
-   **deliberately not installed yet**: the Mac had Remote Login off, and a nightly
-   `scp` that fails looks exactly like a working backup from the Pi's side. To
-   finish, enable Remote Login on the Mac (System Settings → General → Sharing),
-   authorise the Pi's key, then add the line:
-
-   ```bash
-   # Pi's public key, already generated:
-   #   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPs5jlI2Nx6ANA6X9382J+lJ+fZYRd9BUbmniJGtJvzY homeautomator-backup
-   ssh louis@192.168.0.188 'ssh-copy-id louis@192.168.0.91'
-   ssh louis@192.168.0.188 'crontab -e'
-   # 30 4 * * * /usr/bin/scp -q /home/louis/backups/home-$(date +\%u).db louis@192.168.0.91:~/hub-backups/
-   ```
-
-   Then actually look in `~/hub-backups/` on the Mac a few days later — see the
-   warning in §7.9.
-
-2. **Health ingest (§7.10)** — nothing configured, but no longer blocked: the phone
+1. **Health ingest (§7.10)** — nothing configured, but no longer blocked: the phone
    is on the tailnet, so `http://hub:8000/api/health/ingest` resolves from it. Point
    the Health Auto Export iOS app there with **"aggregate sleep data" off** — the
    endpoint needs per-stage segments carrying `startDate`/`endDate` and rejects
@@ -1043,12 +1097,37 @@ Started fresh rather than migrating the Mac's database (§7.6) — the Pi reseed
    fresh and has zero health rows, so §7.10's `seed_health.py --clear` does not apply
    here (that warning is about the *Mac's* database).
 
-3. **Physical placement (§7.11)** — sensor siting not finalised.
+2. **Physical placement (§7.11)** — sensor siting not finalised.
 
-**Known-broken hardware:** the SCD40 reports `CO2:0` in ambient air. It is
-**defective**, not miscalibrated — `perform_self_test` returns non-zero on 5/5 runs
-(see `firmware/scd40_recovery/`). Readings are stored rather than filtered so the
-fault stays visible on the dashboard. Everything else on the wired lane is healthy.
+**Wired lane: all four sensors healthy.** The original SCD40 was genuinely
+defective — `perform_self_test` returned non-zero on 5/5 runs (see
+`firmware/scd40_recovery/`) — and was **replaced on 23 Aug 2026**. The new part
+needed no code or firmware change — it came up at `0x62` on the next boot under the
+same SparkFun SCD4x library (§2.4). First five hours, 3628 samples — no `CO2:0` frames, 391–509 ppm, mean
+sample-to-sample step 0.43 ppm, and slow ~70 ppm excursions that decay smoothly back
+over ~40 min. Those excursions are **not** occupancy — the house went Away at 19:22
+and the room was empty for the whole window (PIR silent, lux 0), so they are the room
+tracking real air: night air exchange with the rest of the flat and the usual
+nocturnal rise in outdoor CO2. Coherent slow drift in an empty room is exactly what a
+working sensor looks like; what would worry you is a flat line or step changes. The baseline floors near **391 ppm**, roughly 30 ppm under the ~425 ppm
+outdoor background, which is inside the SCD40's ±(50 ppm + 5 %) spec. ASC is on and
+should trim it. **Recheck the floor around 30 Aug 2026**; if it still sits below
+~420 ppm with the room aired out, run a forced recalibration outdoors against
+425 ppm (`firmware/scd40_recovery/`, menu 5).
+
+**Swapping a wired sensor writes junk rows — cut the power first.** Disturbing the
+breadboard while the Due is powered wedges the I2C bus, and the BME280 then publishes
+`TEMP:180.0` + `HUM:100.0` bit-identical every 5 s until power is cut, because
+Adafruit's API cannot report an I2C error (0xFF bytes plus boot-cached calibration
+produce a saturated but well-formed number; 100.0 %RH is the ceiling of Bosch's
+humidity formula). The firmware fix for this was written and then reverted at your
+request — commit `14bc002`, reverted by `5ea0257` — so the running sketch still does
+it, and recovering that commit is the fix if you ever do reflash. The 23 Aug swap
+produced 76 such rows across 18:59:29–19:02:34, deleted from `readings` with an
+exact-undo file (INSERT statements, original rowids) kept at
+`~/home_automation/data/deleted_readings_20260823.sql`. Same signature and the same
+cleanup as the 4 Aug bus dropout. The tell that it is the **bus** and not one sensor:
+`motion` keeps working, because the PIR is a plain digital pin.
 
 ---
 

@@ -57,9 +57,21 @@ chips) from the **3.3V pin** so the bus is pulled up to 3.3V — never from 5V.
   needs it); its output signal is natively 3.3V and safe on D2. Let it warm up
   ~60 s after power-on before trusting `MOTION` readings; tune its
   sensitivity/hold-time trimpots in place.
-- SCD40: needs a minute or two to settle; automatic self-calibration assumes
-  the room sees fresh air (≈ 420 ppm) regularly — force a recalibration
-  outdoors if readings look off after installation.
+- SCD40: give it **10 minutes**, not the "minute or two" this note used to
+  claim. Measured on the 23 Aug 2026 replacement: a cold start opens near
+  507 ppm, decays past the true level to a ~339 ppm undershoot at 4 min, then
+  recovers and is trustworthy from roughly 12 min on. Judging the part inside
+  that window will tell you it reads impossibly low. Automatic self-calibration
+  assumes the room sees fresh air (≈ 420 ppm) regularly — force a recalibration
+  outdoors (`firmware/scd40_recovery/`, menu 5, target **425** not 400) if the
+  floor still sits below outdoor background after a week.
+- **Power the Due down before changing anything on the breadboard.** Pulling or
+  seating a sensor on a live 3.3 V bus back-powers the chip through its ESD
+  diodes and can wedge the bus for every device on it; the BME280 answers a
+  wedged bus with saturated `TEMP:180.0` / `HUM:100.0` rather than going quiet.
+  It also does not work: the sketch only calls `co2Sensor.begin()` in `setup()`,
+  and an SCD4x powers up idle, so a hot-plugged CO2 sensor is never told to
+  start measuring and reports nothing at all.
 - Use the Due's **programming port** (micro-USB nearer the DC jack) — that's
   the `Serial` the firmware and host read.
 

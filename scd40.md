@@ -1,5 +1,18 @@
 # SCD40 Diagnostic & Recalibration Plan (Teensy 4.1 / Arduino)
 
+> **Status: closed, 23 Aug 2026 — this is history, not an open task.**
+> The procedure below was carried out and produced its verdict: the part was
+> **defective**, not miscalibrated. `perform_self_test` returned non-zero on 5/5
+> runs (`0x0004`, `0x0006`, `0x000C` — bit 2 set every time, CRC valid), which is
+> criterion 2 of §7 failing, and `perform_forced_recalibration` returned `0xFFFF`
+> after a clean factory reset and 3 min equilibration. The sensor was replaced on
+> 23 Aug 2026 and the new one came up healthy at `0x62` with no code change.
+> The sketch this document specifies lives on as `firmware/scd40_recovery/` and is
+> still the right tool for a future FRC or self-test — see `firmware/README.md`.
+> Note the header: the hardware constraints below are written for a **Teensy 4.1**,
+> but this hub runs an **Arduino Due** (I2C on pins 20/21, not 18/19). The command
+> reference, delays and CRC details are sensor-side and apply unchanged.
+
 ## Task for Claude Code
 
 Write a **single self-contained Arduino sketch** (`scd40_recovery.ino`) that runs an interactive, serial-menu-driven diagnostic and recalibration procedure for a Sensirion SCD40 CO₂ sensor. Do **not** use the Sensirion or Adafruit driver libraries — use raw `Wire` I²C so that every command, delay, and return value is explicit and inspectable. The whole point of this exercise is that library abstractions have been hiding the failure.
