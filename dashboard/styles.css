@@ -2123,13 +2123,16 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   overscroll-behavior-x: contain;
 }
 .uni-grid {
-  --uni-name-w: 220px;
+  --uni-name-w: 210px;
+  --uni-kind-w: 132px;
   display: grid;
-  grid-template-columns: var(--uni-name-w) repeat(var(--uni-weeks, 14), max-content);
+  grid-template-columns: var(--uni-name-w) var(--uni-kind-w) repeat(var(--uni-weeks, 14), max-content);
   width: max-content;
   min-width: 100%;
 }
 .uni-grid > * { border-bottom: 1px solid var(--hairline); }
+/* between a course's lecture and exercise rows: a quieter, dashed rule */
+.uni-grid > .sub-inner { border-bottom: 1px dashed rgba(233, 237, 230, 0.06); }
 
 .uni-corner, .uni-name {
   position: sticky;
@@ -2138,6 +2141,29 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   background: var(--page);
   border-right: 1px solid var(--hairline);
 }
+.uni-corner { grid-column: span 2; }
+.uni-name { grid-column: 1; }
+
+/* second sticky column: which kind this sub-row holds, and its own count */
+.uni-kind {
+  grid-column: 2;
+  position: sticky;
+  left: var(--uni-name-w);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 10px;
+  background: var(--page);
+  border-right: 1px solid var(--hairline);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.uni-kind-label { letter-spacing: 0.06em; color: var(--ink-2); }
+.uni-kind-count { color: var(--muted); }
+
 .uni-corner, .uni-week-head {
   padding: 8px 12px;
   font-family: var(--mono);
@@ -2160,7 +2186,7 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 10px 10px;
+  padding: 7px 10px;
 }
 .is-current.uni-week, .is-current.uni-week-head { background: rgba(210, 148, 85, 0.06); }
 
@@ -2375,7 +2401,13 @@ button.uni-pad.is-done:hover { filter: brightness(1.1); color: var(--page); }
   /* uni pads stay a dense 30px grid — the row scrolls sideways — but each
      grows to a 40px square, and the name column narrows to leave room */
   .uni-pad { width: 40px; height: 40px; }
-  .uni-grid { --uni-name-w: 116px; }
+  .uni-grid { --uni-name-w: 108px; --uni-kind-w: 34px; }
+  /* the kind column shrinks to its letter; the count lives on the
+     course's own bar in the name column */
+  .uni-kind { justify-content: center; padding: 0; }
+  .uni-kind-label { font-size: 0; }
+  .uni-kind-label::after { content: attr(data-letter); font-size: 11px; font-weight: 700; }
+  .uni-kind-count { display: none; }
   .uni-name { padding-right: 8px; }
   .uni-semester-btn { min-height: 44px; }
   /* name over its "5 courses · week 7 of 14" line, so neither runs into

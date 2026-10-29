@@ -780,9 +780,13 @@ keep this list in sync when endpoints change:
   calendar skipped mid-drag or while the event dialog is open, the uni overview while
   one of its dialogs is) — never part of the 5s device poll.
 - **University overview** (Planner view, top): a course × semester-week grid, styled
-  after a reference screenshot but in the soldermask language. One row per course (colour
-  stripe, name, done/total progress bar), one column per week with the current week
-  lit copper, one small **pad** per lecture (`L`) / exercise (`E`) slot. Pad states:
+  after a reference screenshot but in the soldermask language. Each course is a block
+  (colour stripe, name, overall done/total bar) split into **one sub-row per kind** —
+  Lectures, then Exercises, each labelled with its own done/total in a second sticky
+  column, so either reads straight across the semester (a dashed rule between a
+  course's sub-rows, a solid one between courses; on a phone the label shrinks to
+  `L`/`E`). One column per week with the current week lit copper, one small **pad**
+  per slot (`L`/`E`, numbered `L1 L2` when a course has several a week). Pad states:
   open (hairline), this week (copper outline), overdue (past week, still open — red
   outline), done (copper-filled with ✓, the same soldered pad as a done task),
   **didn't take place** (dashed, struck through). Clicking a pad opens a small dialog —

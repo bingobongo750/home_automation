@@ -3600,15 +3600,29 @@ function renderUni() {
     name.append(btn, prog);
     uniGrid.appendChild(name);
 
-    for (let w = 1; w <= semester.weeks; w++) {
-      const weekCell = cell("uni-week", w);
-      for (const k of UNI_KINDS) {
+    // One sub-row per kind the course actually has, so lectures read across
+    // the semester on one line and exercises on the next. A course with
+    // neither still gets one (empty) row so it stays editable.
+    const kinds = UNI_KINDS.filter((k) => course[k.field] > 0);
+    name.style.gridRow = `span ${Math.max(kinds.length, 1)}`;
+    if (!kinds.length) {
+      const kindCell = cell("uni-kind");
+      kindCell.textContent = "—";
+      uniGrid.appendChild(kindCell);
+      for (let w = 1; w <= semester.weeks; w++) uniGrid.appendChild(cell("uni-week", w));
+    }
+    kinds.forEach((k, row) => {
+      // dashed rule between a course's own sub-rows, solid between courses
+      const inner = row < kinds.length - 1 ? " sub-inner" : "";
+      uniGrid.appendChild(uniKindCell(course, k, semester.weeks, inner));
+      for (let w = 1; w <= semester.weeks; w++) {
+        const weekCell = cell(`uni-week${inner}`, w);
         for (let i = 0; i < course[k.field]; i++) {
           weekCell.appendChild(uniPad(course, w, k, i, cur));
         }
+        uniGrid.appendChild(weekCell);
       }
-      uniGrid.appendChild(weekCell);
-    }
+    });
   }
 
   // Land on the current week once — on a desktop with last week still in
@@ -3618,9 +3632,30 @@ function renderUni() {
     uniScrolledOnce = true;
     const first = isPhone() ? cur : Math.max(cur - 1, 1);
     const head = uniGrid.querySelector(`.uni-week-head[data-week="${first}"]`);
+    // measured to the sticky columns' right edge, borders included
     uniScroll.scrollLeft = head.getBoundingClientRect().left
-      - uniGrid.getBoundingClientRect().left - corner.offsetWidth;
+      - corner.getBoundingClientRect().right;
   }
+}
+
+// "Lectures 6/14" beside a sub-row: that kind's own progress, skipped slots
+// out of the total exactly like the course's overall bar. Collapses to the
+// bare letter on a phone (CSS), where the column has to be narrow.
+function uniKindCell(course, k, weeks, inner) {
+  const el = document.createElement("div");
+  el.className = `uni-kind${inner}`;
+  const mine = course.marks.filter((m) => m.kind === k.kind);
+  const done = mine.filter((m) => m.status === "done").length;
+  const total = weeks * course[k.field] - mine.filter((m) => m.status === "skipped").length;
+  const label = document.createElement("span");
+  label.className = "uni-kind-label";
+  label.dataset.letter = k.letter;
+  label.textContent = `${k.label}s`;
+  const count = document.createElement("span");
+  count.className = "uni-kind-count";
+  count.textContent = `${done}/${total}`;
+  el.append(label, count);
+  return el;
 }
 
 function uniPad(course, week, k, idx, cur) {
@@ -3632,8 +3667,8 @@ function uniPad(course, week, k, idx, cur) {
   else if (status === "skipped") pad.classList.add("is-skipped");
   else if (week < cur) pad.classList.add("is-overdue");
   else if (week === cur) pad.classList.add("is-due");
-  pad.textContent = status === "done" ? "✓" : k.letter;
   const n = course[k.field] > 1 ? ` ${idx + 1}` : "";
+  pad.textContent = status === "done" ? "✓" : `${k.letter}${n.trim()}`;
   pad.setAttribute("aria-label", `${course.name}: ${k.label}${n}, week ${week} — ${UNI_STATUS_LABEL[status]}`);
   pad.title = `${k.label}${n} · ${UNI_STATUS_LABEL[status]}`;
   pad.addEventListener("click", () => openSlotDialog(course, week, k, idx));
