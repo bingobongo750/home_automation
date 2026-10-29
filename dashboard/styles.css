@@ -1004,19 +1004,20 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   --cat-social: #c1763a;
 }
 
-.planner-grid {
+/* the two to-do widgets (Life stuff / University) side by side under the
+   uni overview; one column once there is no room for two */
+.todo-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2.4fr) minmax(280px, 1fr);
-  gap: 0 14px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
   align-items: start;
 }
-@media (max-width: 960px) { .planner-grid { grid-template-columns: 1fr; } }
 
 /* Page width is the other half of "how big is the calendar window". Above
-   100% the planner breaks out of main's 1180px column, staying centred, and is
-   capped so it can never run off the screen. At --cal-size: 1 this resolves to
-   exactly main's content box, so the default layout is untouched. */
-#view-planner {
+   100% the calendar view breaks out of main's 1180px column, staying centred,
+   and is capped so it can never run off the screen. At --cal-size: 1 this
+   resolves to exactly main's content box, so the default layout is untouched. */
+#view-calendar {
   --planner-w: min(calc(100% * var(--cal-size, 1)), calc(100vw - 40px));
   width: var(--planner-w);
   margin-left: calc((100% - var(--planner-w)) / 2);
@@ -1425,10 +1426,6 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 
 /* ---- to-do card ---- */
-
-/* Two stacked to-do widgets (Life stuff / University) share the right column;
-   space them the way separate cards elsewhere are spaced. */
-.task-card + .task-card { margin-top: 14px; }
 
 .task-head {
   display: flex;
@@ -2100,6 +2097,182 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
 }
 .cal-zoom-reset { font-family: var(--mono); font-size: 10.5px; padding: 2px 7px; }
 
+
+/* ---- uni course overview (Planner view) ----
+   A course x week grid: the name column is sticky, weeks scroll sideways.
+   Each lecture/exercise slot is a small pad in the silkscreen voice —
+   hairline when open, copper-outlined in the current week, red-outlined once
+   its week has passed, copper-filled when done (the same "soldered pad" as a
+   done task's checkbox), dashed and struck through when it didn't take place. */
+
+.uni-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.uni-heading { display: flex; align-items: baseline; gap: 10px; margin-right: auto; min-width: 0; }
+.uni-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.uni-semester-btn { border: 1px solid var(--hairline); }
+
+.uni-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--page);
+  overscroll-behavior-x: contain;
+}
+.uni-grid {
+  --uni-name-w: 220px;
+  display: grid;
+  grid-template-columns: var(--uni-name-w) repeat(var(--uni-weeks, 14), max-content);
+  width: max-content;
+  min-width: 100%;
+}
+.uni-grid > * { border-bottom: 1px solid var(--hairline); }
+
+.uni-corner, .uni-name {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--page);
+  border-right: 1px solid var(--hairline);
+}
+.uni-corner, .uni-week-head {
+  padding: 8px 12px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.uni-week-head { text-align: center; letter-spacing: 0.08em; }
+.uni-week-head.is-current span {
+  color: var(--page);
+  background: var(--copper);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 700;
+}
+.uni-week, .uni-week-head { min-width: 76px; border-left: 1px solid var(--hairline); }
+.uni-week {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px 10px;
+}
+.is-current.uni-week, .is-current.uni-week-head { background: rgba(210, 148, 85, 0.06); }
+
+.uni-name {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px 8px 16px;
+  min-width: 0;
+}
+/* the course's colour as a pad-edge stripe, like the calendar's event blocks */
+.uni-name::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--evc);
+}
+.uni-name-btn {
+  text-align: left;
+  font-size: 13.5px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uni-name-btn:hover { color: var(--copper); }
+.uni-progress { display: flex; align-items: center; gap: 8px; }
+.uni-progress-bar {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.uni-progress-bar span { display: block; height: 100%; background: var(--evc); }
+.uni-progress-count { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+
+.uni-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--muted);
+  position: sticky;
+  left: 0;
+  width: max-content;
+}
+
+.uni-pad {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid rgba(233, 237, 230, 0.16);
+  border-radius: 6px;
+  background: var(--surface);
+  transition: border-color 0.1s ease, background 0.1s ease;
+}
+button.uni-pad:hover { border-color: var(--ink-2); color: var(--ink); }
+.uni-pad.is-due { border-color: var(--copper); color: var(--copper); }
+.uni-pad.is-overdue { border-color: rgba(208, 59, 59, 0.6); color: var(--critical); }
+.uni-pad.is-done { background: var(--copper); border-color: var(--copper); color: var(--page); font-size: 13px; }
+button.uni-pad.is-done:hover { filter: brightness(1.1); color: var(--page); }
+.uni-pad.is-skipped {
+  border-style: dashed;
+  background: transparent;
+  color: rgba(139, 148, 138, 0.6);
+  text-decoration: line-through;
+}
+
+.uni-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.uni-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.uni-pad.lg { width: 12px; height: 12px; border-radius: 3px; }
+.uni-legend-keys b { color: var(--ink-2); }
+
+/* course swatches: the calendar's category hues under neutral names
+   (COURSE_COLORS in app.js, COLORS in app/uni.py) */
+.uc-blue   { --evc: var(--cat-work);     --evbg: rgba(57, 135, 229, 0.16); }
+.uc-green  { --evc: var(--cat-home);     --evbg: rgba(25, 158, 112, 0.16); }
+.uc-violet { --evc: var(--cat-personal); --evbg: rgba(144, 133, 233, 0.16); }
+.uc-amber  { --evc: var(--cat-health);   --evbg: rgba(201, 133, 0, 0.16); }
+.uc-orange { --evc: var(--cat-social);   --evbg: rgba(193, 118, 58, 0.16); }
+
+.uni-form { display: flex; flex-direction: column; gap: 14px; }
+.uni-form .cat-btn { text-transform: capitalize; }
+.uni-count-rows { display: flex; flex-direction: column; gap: 10px; }
+.uni-count-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.uni-count-label { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.uni-form .event-fields input[type="number"] { width: 70px; }
+.uni-item-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
 /* ================================================================= phone
 
    One DOM, one stylesheet, one JS bundle — the phone gets a different
@@ -2199,6 +2372,16 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   .plug-lock-btn, .night-delete {
     min-height: 44px;
   }
+  /* uni pads stay a dense 30px grid — the row scrolls sideways — but each
+     grows to a 40px square, and the name column narrows to leave room */
+  .uni-pad { width: 40px; height: 40px; }
+  .uni-grid { --uni-name-w: 116px; }
+  .uni-name { padding-right: 8px; }
+  .uni-semester-btn { min-height: 44px; }
+  /* name over its "5 courses · week 7 of 14" line, so neither runs into
+     the semester / + buttons */
+  .uni-heading { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .uni-heading .task-card-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   .nav-btn { min-width: 44px; }
   .add-btn, .summary-dismiss { width: 44px; height: 44px; }
   .plug-lock-btn { min-width: 44px; justify-content: center; }
@@ -2248,12 +2431,12 @@ main { padding: 8px 28px 48px; max-width: 1180px; margin: 0 auto; }
   .threshold-row input[type="checkbox"] { width: 22px; height: 22px; }
 
   /* ---- planner ----
-     --cal-size is forced to 1 in app.js on a phone, so the #view-planner
+     --cal-size is forced to 1 in app.js on a phone, so the #view-calendar
      breakout resolves to main's content box; pinning it here as well means a
      stale localStorage value can never widen the document before the JS
      runs. The size/scale steppers are desktop affordances — there is exactly
      one sensible calendar width on a 390px screen, and it is the screen. */
-  #view-planner { width: 100%; margin-left: 0; }
+  #view-calendar { width: 100%; margin-left: 0; }
   .cal-zoom, .cal-zoom-reset { display: none; }
   .cal-scroll { max-height: 62dvh; }
 

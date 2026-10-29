@@ -397,6 +397,25 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
   section.
 - Covered by `server/tests/test_planner.py` (same mock-hardware harness).
 
+## University courses
+
+- A **self-contained module**, `app/uni.py`: own tables (`uni_semester`,
+  `uni_courses`, `uni_marks`; DDL and `init_db()` in that file), own blueprint under
+  `/api/uni`. Touches nothing else — not the device lanes, not the calendar.
+- One **semester** row: name, the Monday of week 1 (any date is snapped back to its
+  Monday) and a week count; seeded as a 14-week semester starting the week of first
+  boot, edited from the overview's "semester" button.
+- A **course** declares how many lectures and exercises it has per week (0–5 each).
+  Every (week, kind, idx) slot that implies is **open** until marked; a `uni_marks` row
+  exists only for `done` or `skipped` ("didn't take place"), and marking a slot open
+  deletes the row.
+- **Skipped slots leave the total** — a lecture that never happened is not one you are
+  behind on — so progress is `done / (weeks × slots − skipped)`.
+- Shrinking a course (fewer slots per week, fewer semester weeks) **hides** marks
+  beyond the new shape rather than deleting them, so growing it back loses nothing.
+- Every write returns the whole overview, so the dashboard re-renders from the reply.
+- Covered by `server/tests/test_uni.py`.
+
 ## Health (sleep/recovery)
 
 - Built pass-by-pass per `docs/health-build-plan.md` (spec:
@@ -484,7 +503,8 @@ future wired addressable lighting as a fresh addition, not a revival of that pla
 
 ## API shape (backend)
 
-Implemented in `server/app/api.py` (planner endpoints in `server/app/planner.py`) —
+Implemented in `server/app/api.py` (planner endpoints in `server/app/planner.py`, uni
+endpoints in `server/app/uni.py`) —
 keep this list in sync when endpoints change:
 
 - `GET /api/sensors/latest` — most recent reading per sensor
@@ -539,6 +559,13 @@ keep this list in sync when endpoints change:
 - `GET /api/tasks?list=home&done=false` — filterable to-do list
 - `POST /api/tasks`, `PUT /api/tasks/:id`, `DELETE /api/tasks/:id` — task CRUD (PUT is partial, including `done`)
 - `POST /api/tasks/:id/complete` — one-tap task completion (idempotent)
+- `GET /api/uni` — the uni overview: semester (`name`/`start`/`weeks`/`current_week`) +
+  every course with its marks and `done`/`skipped`/`total`
+- `PUT /api/uni/semester` — partial `{name, start, weeks}`; `start` snaps to its Monday
+- `POST /api/uni/courses`, `PUT /api/uni/courses/:id`, `DELETE /api/uni/courses/:id` —
+  course CRUD (`name`, `color`, `lectures`/`exercises` per week)
+- `PUT /api/uni/courses/:id/marks` — `{week, kind, idx, status}`: mark one
+  lecture/exercise slot `done`, `skipped` (didn't take place) or `open`
 - `POST /api/arduino/command` — send a raw `KEY:VALUE` protocol line to the Arduino (exists for any future wired actuator and manual testing; bulb zones do not use this)
 - `GET/POST /api/arduino/serial` — release the serial port for reflashing (`{"paused": true, "minutes": 20}`) without stopping the hub; the pause always self-expires (default 15min, capped 2h)
 
@@ -548,17 +575,22 @@ keep this list in sync when endpoints change:
   mono silkscreen labels, a live "RX" serial ticker replaying raw `KEY:VALUE` lines) — this
   visual language is approved, keep it when touching the dashboard. Consult the
   `frontend-design` skill for direction on any new surface.
-- **Three views behind a header VIEW switch (Board / Planner / Health), and only these
-  three.** The **Board** stays a single scrolling page of widgets grouped into `.zone`
-  sections: **Room conditions** (temp/humidity/light/CO2), **Power** (one plug-pair per
+- **Four views behind a header VIEW switch (Board / Planner / Calendar / Health), and
+  only these four.** The **Board** (its header button reads "Room"; `data-view="board"` and
+  `#view-board` keep the internal name, which the rest of this file uses) stays a
+  single scrolling page of widgets grouped into `.zone` sections: **Room conditions**
+  (temp/humidity/light/CO2), **Power** (one plug-pair per
   WiFi plug: switch + power widget), **Lighting** (one card per bulb zone), **Motion**
   (PIR status + activity log). Any further **device type** must follow the same
   pattern: another `.zone` of widgets/cards on the Board, never a new view/tab. The
-  **Planner** view (Calendar agenda + To-do panels, quick-add/edit forms, deep-linked
-  as `/#planner`) and the **Health** view (Apple Health sleep/recovery data, deep-linked
-  as `/#health`, built pass-by-pass per `docs/health-build-plan.md`) each earned a
-  separate view only because neither is a device lane at all — don't take them as
-  precedent for splitting device zones into tabs.
+  **Planner** view (the University course overview above the two to-do widgets,
+  deep-linked as `/#planner`), the **Calendar** view (the time-grid calendar alone, so
+  it gets the full page width, `/#calendar`) and the **Health** view (Apple Health
+  sleep/recovery data, deep-linked as `/#health`, built pass-by-pass per
+  `docs/health-build-plan.md`) each earned a separate view only because none is a
+  device lane at all — don't take them as precedent for splitting device zones into
+  tabs. (Planner and Calendar were one view until the uni overview arrived; the
+  calendar moved out because the course grid needs the width as much as it does.)
 - Each Lighting card's top-right switch stays clickable in both modes. **It is a master
   gate and it beats the auto loop:** the user decides which lamps may light at all, and
   a disarmed zone stays dark no matter what auto mode wants. The card says so per zone
@@ -684,10 +716,10 @@ keep this list in sync when endpoints change:
   though only one is adjustable now:
   - **`--cal-size`** is the *physical size of the calendar window on the page*: the
     grid box's visible height (`720px ×`), the month row height (`86px ×`), and the
-    page width the planner claims. A plain multiplier (0.7–1.6, 0.1 steps) set by
+    page width the calendar view claims. A plain multiplier (0.7–1.6, 0.1 steps) set by
     `app.js` from a **size** stepper in the toolbar, with a reset; persisted in
     localStorage. Every dimension is derived from it in CSS. Above 1.0
-    `#view-planner` breaks out of `main`'s 1180 px column, staying centred and
+    `#view-calendar` breaks out of `main`'s 1180 px column, staying centred and
     capped at `100vw - 40px` so it can never overflow the screen; at exactly 1.0 it
     resolves to `main`'s content box, so the default layout is untouched.
   - **`--cal-hour-px`** is the *scale inside* that window — an hour's height,
@@ -735,17 +767,32 @@ keep this list in sync when endpoints change:
   `↻` and edit/delete as a whole series. The to-do list is deliberately flat and slim:
   rows with due-date/priority chips, one-tap square-pad checkbox, a small + toggling the
   inline add row (which ✎ reuses for edits), done tasks behind "Show done". The tasks
-  `list` column is surfaced as **two separate stacked to-do widgets** in the right
-  column beside the calendar, under one shared "To-do" zone caption — **Life stuff**
+  `list` column is surfaced as **two separate to-do widgets** side by side on the
+  Planner view (stacked on narrow screens), under one shared "To-do" zone caption — **Life stuff**
   (`list = "life"`) above **University** (`list = "university"`), each its own card with
   its own count, + button, add/edit row and Show-done toggle. They're generated by
   cloning `#task-card-tpl` once per entry in `TASK_LISTS` (app.js), each wired as a
   self-contained `TaskWidget` with its own `editingId`/`showDone`; all share the one
   `plannerTasks` fetch. "University" is an exact match and "Life stuff" is the catch-all
   (untagged/legacy-tagged tasks live there so nothing is ever orphaned). New tasks get
-  the widget's list; editing a task never moves it between lists. Planner data loads on view
-  switch and refreshes on the 30s tick (skipped mid-drag or while the event dialog is
-  open) — never part of the 5s device poll.
+  the widget's list; editing a task never moves it between lists. Planner and Calendar
+  data load on view switch and refresh on the 30s tick while their view is open (the
+  calendar skipped mid-drag or while the event dialog is open, the uni overview while
+  one of its dialogs is) — never part of the 5s device poll.
+- **University overview** (Planner view, top): a course × semester-week grid, styled
+  after a reference screenshot but in the soldermask language. One row per course (colour
+  stripe, name, done/total progress bar), one column per week with the current week
+  lit copper, one small **pad** per lecture (`L`) / exercise (`E`) slot. Pad states:
+  open (hairline), this week (copper outline), overdue (past week, still open — red
+  outline), done (copper-filled with ✓, the same soldered pad as a done task),
+  **didn't take place** (dashed, struck through). Clicking a pad opens a small dialog —
+  Done / Didn't take place / Mark open; clicking a course name edits the course
+  (name, colour, lectures/exercises per week, Delete behind a confirm click). The name
+  column is sticky and weeks scroll sideways; the first render lands on the current
+  week. Course colours are the calendar's validated category hues under neutral names
+  (`COURSE_COLORS` in `app.js`, `COLORS` in `app/uni.py` — keep in sync). It is a
+  weekly checklist, **not** calendar events: there are no times, so there is no
+  "due within 48h" state, and nothing here writes to `events`.
 - **Phone layout: one DOM, one stylesheet, media queries.** The phone gets a
   different *layout*, never a different page — a separate UA-sniffed mobile
   document was considered and rejected (two dashboards to keep in step, and
@@ -756,7 +803,7 @@ keep this list in sync when endpoints change:
   their persisted values ignored (and **not** rewritten, so a narrowed desktop
   window can't clobber the size chosen there), the day title shortens to
   "Tue, 4 Aug", and **the Board is always the landing view**. That last one is
-  why `showView()` does not write `#planner`/`#health` into the URL on a phone
+  why `showView()` does not write `#planner`/`#calendar`/`#health` into the URL on a phone
   and why a view hash is ignored there at load: mobile Safari reopens the URL it
   last had, and a home-screen icon keeps the URL it was saved with, so the
   deep-link hash otherwise promotes one visit to the Planner into the phone's

@@ -3,10 +3,11 @@
    board — live values poll every 5s; sparklines and an open detail dialog
    refresh every 30s; clicking a widget opens its detail in an overlay
    dialog so nothing on the board moves; the switch cards control the plugs
-   and lighting zones, and the header MODE switch drives house scenes) and
-   PLANNER (local day/week/month calendar + to-do list, backed by
-   /api/events and /api/tasks — loaded on switch, refreshed on the 30s tick
-   while open). */
+   and lighting zones, and the header MODE switch drives house scenes),
+   PLANNER (uni course overview + to-do lists, backed by /api/uni and
+   /api/tasks), CALENDAR (local day/week/month calendar over /api/events) and
+   HEALTH. The non-board views load on switch and refresh on the 30s tick
+   while open. */
 
 "use strict";
 
@@ -896,6 +897,7 @@ document.addEventListener("keydown", (ev) => {
   else if (!sleepOverlay.hidden) closeSleepDialog();
   else if (!settingsOverlay.hidden) closeSettings();
   else if (!eventOverlay.hidden) closeEventDialog();
+  else if (openUniDialog()) closeUniDialog(openUniDialog());
   else if (!vitalsOverlay.hidden) closeVitalsDetail();
   else if (!sleepdOverlay.hidden) closeSleepDetail();
   else if (!overlayEl.hidden) closeDetail();
@@ -2400,14 +2402,15 @@ document.querySelectorAll("[data-nmetric]").forEach((btn) => {
 });
 
 /* ------------------------------------------------------------ view switch
-   BOARD is the device dashboard; PLANNER (calendar + to-do) and HEALTH
-   (sleep/recovery) are the non-device views. Device types always get a new
+   BOARD is the device dashboard; PLANNER (uni courses + to-do), CALENDAR and
+   HEALTH (sleep/recovery) are the non-device views. Device types always get a new
    .zone on the board — a view of its own is only for non-device surfaces. */
 
 const boardView = document.getElementById("view-board");
 const plannerView = document.getElementById("view-planner");
+const calendarView = document.getElementById("view-calendar");
 const healthView = document.getElementById("view-health");
-const views = { board: boardView, planner: plannerView, health: healthView };
+const views = { board: boardView, planner: plannerView, calendar: calendarView, health: healthView };
 const viewButtons = [...document.querySelectorAll(".view-btn")];
 
 function showView(name) {
@@ -2419,6 +2422,7 @@ function showView(name) {
     btn.setAttribute("aria-pressed", String(on));
   }
   if (name === "planner") refreshPlanner();
+  if (name === "calendar") loadEvents();
   if (name === "health") refreshHealth();
   // Deep-linkable, like the widget hashes — but never on a phone. Mobile
   // Safari reopens the URL it last had, and a home-screen icon keeps whatever
@@ -2612,8 +2616,9 @@ function eventTimeLabel(ev) {
     : `${fmtHM(ev.start)}–${fmtHM(ev.end)}`;
 }
 
+// the Planner view: uni overview + to-do lists (the calendar is its own view)
 async function refreshPlanner() {
-  await Promise.all([loadEvents(), loadTasks()]);
+  await Promise.all([loadUni(), loadTasks()]);
 }
 
 async function loadEvents() {
@@ -3469,7 +3474,7 @@ function makeTaskWidget({ list, title }) {
     widget.render();
   });
 
-  document.getElementById("todo-zone").appendChild(card);
+  document.getElementById("todo-grid").appendChild(card);
   return widget;
 }
 
@@ -3479,6 +3484,350 @@ const taskWidgets = TASK_LISTS.map(makeTaskWidget);
 function renderTasks() {
   for (const w of taskWidgets) w.render();
 }
+
+/* -------------------------------------------------------------------- uni
+   Course overview on the Planner view, over /api/uni (app/uni.py). One row
+   per course, one column per semester week, one pad per lecture/exercise
+   slot that week. A pad is open, done, or skipped ("didn't take place" —
+   it leaves the course's total rather than counting against you); an open
+   pad in a past week reads as overdue, in this week as due. Clicking a pad
+   opens #uni-item-overlay; clicking a course name edits the course. Every
+   write returns the whole overview, so the grid re-renders from the reply. */
+
+// Keep in sync with COLORS in app/uni.py. The hues are the calendar's
+// validated category set under neutral names (see .uc-* in styles.css).
+const COURSE_COLORS = ["blue", "green", "violet", "amber", "orange"];
+const UNI_KINDS = [
+  { kind: "lecture", field: "lectures", letter: "L", label: "Lecture" },
+  { kind: "exercise", field: "exercises", letter: "E", label: "Exercise" },
+];
+const UNI_STATUS_LABEL = { open: "open", done: "done", skipped: "didn't take place" };
+
+let uniData = null;          // last /api/uni reply
+let uniScrolledOnce = false; // first render scrolls the current week into view
+let uniEditingCourse = null; // course id in the course dialog, or null
+let uniSlot = null;          // { course, week, kind, idx } in the slot dialog
+
+const uniGrid = document.getElementById("uni-grid");
+const uniScroll = document.getElementById("uni-scroll");
+const uniOverlays = {
+  "uni-course": document.getElementById("uni-course-overlay"),
+  "uni-semester": document.getElementById("uni-semester-overlay"),
+  "uni-item": document.getElementById("uni-item-overlay"),
+};
+
+async function loadUni() {
+  try {
+    uniData = await getJSON("/api/uni");
+  } catch { return; } // link indicator already reports backend loss
+  renderUni();
+}
+
+// Monday of a semester week, as a Date (week is 1-based)
+function uniWeekStart(week) {
+  const [y, m, d] = uniData.semester.start.split("-").map(Number);
+  return new Date(y, m - 1, d + (week - 1) * 7);
+}
+
+function uniSlotStatus(course, week, kind, idx) {
+  const mark = course.marks.find((m) => m.week === week && m.kind === kind && m.idx === idx);
+  return mark ? mark.status : "open";
+}
+
+function renderUni() {
+  const { semester, courses } = uniData;
+  const cur = semester.current_week;
+  const inSemester = cur >= 1 && cur <= semester.weeks;
+  document.getElementById("uni-semester-name").textContent = semester.name;
+  const parts = [`${courses.length} course${courses.length === 1 ? "" : "s"}`];
+  if (cur < 1) parts.push(`starts ${shortDate(uniWeekStart(1) / 1000)}`);
+  else if (cur > semester.weeks) parts.push("semester over");
+  else parts.push(`week ${cur} of ${semester.weeks}`);
+  document.getElementById("uni-sub").textContent = parts.join(" · ");
+
+  uniGrid.textContent = "";
+  uniGrid.style.setProperty("--uni-weeks", semester.weeks);
+
+  const cell = (cls, week) => {
+    const el = document.createElement("div");
+    el.className = cls;
+    if (week === cur) el.classList.add("is-current");
+    return el;
+  };
+
+  // header row: corner + one head per week (dated on hover)
+  const corner = cell("uni-corner");
+  corner.textContent = "Course";
+  uniGrid.appendChild(corner);
+  for (let w = 1; w <= semester.weeks; w++) {
+    const head = cell("uni-week-head", w);
+    head.dataset.week = w;
+    head.title = `Week ${w} · from ${shortDate(uniWeekStart(w) / 1000)}`;
+    const tag = document.createElement("span");
+    tag.textContent = `W${w}`;
+    head.appendChild(tag);
+    uniGrid.appendChild(head);
+  }
+
+  if (!courses.length) {
+    const empty = document.createElement("p");
+    empty.className = "uni-empty";
+    empty.textContent = "No courses yet — add one with +.";
+    uniGrid.appendChild(empty);
+  }
+
+  for (const course of courses) {
+    const name = cell(`uni-name uc-${course.color}`);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "uni-name-btn";
+    btn.textContent = course.name;
+    btn.title = "Edit course";
+    btn.addEventListener("click", () => openCourseDialog(course));
+    const prog = document.createElement("div");
+    prog.className = "uni-progress";
+    const bar = document.createElement("span");
+    bar.className = "uni-progress-bar";
+    const fill = document.createElement("span");
+    fill.style.width = `${course.total ? (100 * course.done) / course.total : 0}%`;
+    bar.appendChild(fill);
+    const count = document.createElement("span");
+    count.className = "uni-progress-count";
+    count.textContent = `${course.done}/${course.total}`;
+    count.title = course.skipped
+      ? `${course.skipped} didn't take place — not counted` : "";
+    prog.append(bar, count);
+    name.append(btn, prog);
+    uniGrid.appendChild(name);
+
+    for (let w = 1; w <= semester.weeks; w++) {
+      const weekCell = cell("uni-week", w);
+      for (const k of UNI_KINDS) {
+        for (let i = 0; i < course[k.field]; i++) {
+          weekCell.appendChild(uniPad(course, w, k, i, cur));
+        }
+      }
+      uniGrid.appendChild(weekCell);
+    }
+  }
+
+  // Land on the current week once — on a desktop with last week still in
+  // view to its left, on a phone (where one or two weeks fit) on the week
+  // itself. After that the scroll position is the user's.
+  if (!uniScrolledOnce && courses.length && inSemester) {
+    uniScrolledOnce = true;
+    const first = isPhone() ? cur : Math.max(cur - 1, 1);
+    const head = uniGrid.querySelector(`.uni-week-head[data-week="${first}"]`);
+    uniScroll.scrollLeft = head.getBoundingClientRect().left
+      - uniGrid.getBoundingClientRect().left - corner.offsetWidth;
+  }
+}
+
+function uniPad(course, week, k, idx, cur) {
+  const status = uniSlotStatus(course, week, k.kind, idx);
+  const pad = document.createElement("button");
+  pad.type = "button";
+  pad.className = "uni-pad";
+  if (status === "done") pad.classList.add("is-done");
+  else if (status === "skipped") pad.classList.add("is-skipped");
+  else if (week < cur) pad.classList.add("is-overdue");
+  else if (week === cur) pad.classList.add("is-due");
+  pad.textContent = status === "done" ? "✓" : k.letter;
+  const n = course[k.field] > 1 ? ` ${idx + 1}` : "";
+  pad.setAttribute("aria-label", `${course.name}: ${k.label}${n}, week ${week} — ${UNI_STATUS_LABEL[status]}`);
+  pad.title = `${k.label}${n} · ${UNI_STATUS_LABEL[status]}`;
+  pad.addEventListener("click", () => openSlotDialog(course, week, k, idx));
+  return pad;
+}
+
+/* ---- dialogs ---- */
+
+function openUniDialogEl(key) {
+  uniOverlays[key].hidden = false;
+  document.body.style.overflow = "hidden";
+}
+
+// the key of whichever uni dialog is open, or null
+function openUniDialog() {
+  return Object.keys(uniOverlays).find((k) => !uniOverlays[k].hidden) || null;
+}
+
+function closeUniDialog(key) {
+  uniOverlays[key].hidden = true;
+  if (!document.querySelector(".detail-overlay:not([hidden])")) {
+    document.body.style.overflow = "";
+  }
+}
+
+document.querySelectorAll("[data-close^='uni-']").forEach((el) =>
+  el.addEventListener("click", () => closeUniDialog(el.dataset.close)));
+
+function setNote(el, msg, cls = "") {
+  el.textContent = msg;
+  el.className = `save-note ${cls}`.trim();
+}
+
+// A row of chips (0..max) acting as a radio group, in the priority picker's look.
+function countSegment(group, max) {
+  for (let n = 0; n <= max; n++) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "prio-seg-btn";
+    b.setAttribute("role", "radio");
+    b.dataset.n = n;
+    b.textContent = n;
+    b.addEventListener("click", () => paint(n));
+    group.appendChild(b);
+  }
+  const btns = [...group.children];
+  let value = 1;
+  function paint(n) {
+    value = n;
+    btns.forEach((b) => {
+      const on = Number(b.dataset.n) === n;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-checked", String(on));
+    });
+  }
+  return { get value() { return value; }, set value(n) { paint(n); } };
+}
+
+const courseForm = document.getElementById("uni-course-form");
+const courseName = document.getElementById("uni-course-name");
+const courseNote = document.getElementById("uni-course-note");
+const courseDelete = document.getElementById("uni-course-delete");
+const courseColorEl = document.getElementById("uni-course-color");
+const courseCounts = Object.fromEntries(
+  [...document.querySelectorAll(".uni-count")].map((g) => [g.dataset.field, countSegment(g, 5)]));
+let courseColor = COURSE_COLORS[0];
+
+for (const c of COURSE_COLORS) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = `cat-btn uc-${c}`;
+  b.dataset.color = c;
+  b.textContent = c;
+  b.addEventListener("click", () => paintCourseColor(c));
+  courseColorEl.appendChild(b);
+}
+function paintCourseColor(c) {
+  courseColor = c;
+  courseColorEl.querySelectorAll(".cat-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.color === c));
+}
+
+function openCourseDialog(course) {
+  uniEditingCourse = course ? course.id : null;
+  document.getElementById("uni-course-title").textContent = course ? "Course" : "New course";
+  document.getElementById("uni-course-submit").textContent = course ? "Save" : "Add course";
+  courseName.value = course ? course.name : "";
+  // a new course gets the next swatch in rotation, like the backend default
+  paintCourseColor(course ? course.color
+    : COURSE_COLORS[(uniData ? uniData.courses.length : 0) % COURSE_COLORS.length]);
+  courseCounts.lectures.value = course ? course.lectures : 1;
+  courseCounts.exercises.value = course ? course.exercises : 1;
+  courseDelete.hidden = !course;
+  courseDelete.textContent = "Delete";
+  delete courseDelete.dataset.armed;
+  setNote(courseNote, "");
+  openUniDialogEl("uni-course");
+  courseName.focus();
+}
+
+document.getElementById("uni-add-btn").addEventListener("click", () => openCourseDialog(null));
+
+courseForm.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = {
+    name: courseName.value,
+    color: courseColor,
+    lectures: courseCounts.lectures.value,
+    exercises: courseCounts.exercises.value,
+  };
+  try {
+    uniData = uniEditingCourse
+      ? await putJSON(`/api/uni/courses/${uniEditingCourse}`, body)
+      : await postJSON("/api/uni/courses", body);
+    closeUniDialog("uni-course");
+    renderUni();
+  } catch (err) {
+    setNote(courseNote, err.message || "Couldn't save the course — is the backend up?", "err");
+  }
+});
+
+// Deleting a course takes its whole semester of marks with it, so the first
+// click arms the button and only the second deletes.
+courseDelete.addEventListener("click", async () => {
+  if (!courseDelete.dataset.armed) {
+    courseDelete.dataset.armed = "1";
+    courseDelete.textContent = "Delete course + its marks?";
+    return;
+  }
+  try {
+    uniData = await deleteJSON(`/api/uni/courses/${uniEditingCourse}`);
+    closeUniDialog("uni-course");
+    renderUni();
+  } catch (err) {
+    setNote(courseNote, err.message || "Couldn't delete the course.", "err");
+  }
+});
+
+const semForm = document.getElementById("uni-semester-form");
+const semNote = document.getElementById("uni-sem-note");
+
+document.getElementById("uni-semester-btn").addEventListener("click", () => {
+  if (!uniData) return;
+  const { name, start, weeks } = uniData.semester;
+  document.getElementById("uni-sem-name").value = name;
+  document.getElementById("uni-sem-start").value = start;
+  document.getElementById("uni-sem-weeks").value = weeks;
+  setNote(semNote, "");
+  openUniDialogEl("uni-semester");
+});
+
+semForm.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  try {
+    uniData = await putJSON("/api/uni/semester", {
+      name: document.getElementById("uni-sem-name").value,
+      start: document.getElementById("uni-sem-start").value,
+      weeks: Number(document.getElementById("uni-sem-weeks").value),
+    });
+    uniScrolledOnce = false; // the current week may have moved
+    closeUniDialog("uni-semester");
+    renderUni();
+  } catch (err) {
+    setNote(semNote, err.message || "Couldn't save the semester.", "err");
+  }
+});
+
+const slotButtons = [...document.querySelectorAll("#uni-item-overlay [data-status]")];
+
+function openSlotDialog(course, week, k, idx) {
+  uniSlot = { course: course.id, week, kind: k.kind, idx };
+  const status = uniSlotStatus(course, week, k.kind, idx);
+  const n = course[k.field] > 1 ? ` ${idx + 1}` : "";
+  document.getElementById("uni-item-title").textContent = `${k.label}${n}`;
+  document.getElementById("uni-item-key").textContent = `W${week}`;
+  document.getElementById("uni-item-sub").textContent =
+    `${course.name} · week of ${shortDate(uniWeekStart(week) / 1000)} · ${UNI_STATUS_LABEL[status]}`;
+  // offer only the moves away from where the slot already is
+  slotButtons.forEach((b) => { b.hidden = b.dataset.status === status; });
+  setNote(document.getElementById("uni-item-note"), "");
+  openUniDialogEl("uni-item");
+  slotButtons.find((b) => !b.hidden).focus();
+}
+
+slotButtons.forEach((b) => b.addEventListener("click", async () => {
+  const { course, ...slot } = uniSlot;
+  try {
+    uniData = await putJSON(`/api/uni/courses/${course}/marks`, { ...slot, status: b.dataset.status });
+    closeUniDialog("uni-item");
+    renderUni();
+  } catch (err) {
+    setNote(document.getElementById("uni-item-note"), err.message || "Couldn't save.", "err");
+  }
+}));
 
 /* ------------------------------------------------------------------ time */
 
@@ -4589,10 +4938,10 @@ document.querySelectorAll(
   refreshAllSparks();
   // deep-link: /#temp, /#co2, /#motion, /#power-1 (device id) opens that
   // detail; an optional range suffix like /#temp:3h preselects the range;
-  // /#settings opens the threshold dialog; /#planner and /#health open
-  // those views
+  // /#settings opens the threshold dialog; /#planner, /#calendar and
+  // /#health open those views
   const [hash, hashRange] = location.hash.slice(1).split(":");
-  if (hash === "planner" || hash === "health") {
+  if (hash === "planner" || hash === "calendar" || hash === "health") {
     // The board is always the phone's landing view, even from a saved
     // home-screen icon or a restored tab still carrying "#planner" from
     // before showView() stopped writing it. The widget hashes below are not
@@ -4621,6 +4970,8 @@ document.querySelectorAll(
     // keeps the calendar's today marker and now-line honest, and picks up
     // edits made from another device — but never rebuilds the grid under an
     // open event dialog or an in-flight drag
-    if (!plannerView.hidden && eventOverlay.hidden && !calDragging) refreshPlanner();
+    if (!calendarView.hidden && eventOverlay.hidden && !calDragging) loadEvents();
+    // same for the uni overview: never re-render under an open uni dialog
+    if (!plannerView.hidden && !openUniDialog()) refreshPlanner();
   }, POLL_SLOW_MS);
 })();

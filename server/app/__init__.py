@@ -7,7 +7,7 @@ from pathlib import Path
 
 from flask import Flask
 
-from . import caldav_sync, config, db, health, lighting, planner, poller, scenes, serial_reader
+from . import caldav_sync, config, db, health, lighting, planner, poller, scenes, serial_reader, uni
 from .api import api
 
 DASHBOARD_DIR = Path(__file__).resolve().parent.parent.parent / "dashboard"
@@ -23,6 +23,7 @@ def create_app() -> Flask:
     db.init_db()
     planner.init_db()  # planner owns its own tables (see app/planner.py)
     health.init_db()   # health too (see app/health.py)
+    uni.init_db()      # and the uni course tracker (see app/uni.py)
     log.info("Database ready at %s", config.DB_PATH)
     if config.MOCK_HARDWARE:
         log.warning("Running with MOCK_HARDWARE=1 — all hardware is simulated")
@@ -43,6 +44,7 @@ def create_app() -> Flask:
     app.register_blueprint(api)
     app.register_blueprint(planner.bp)
     app.register_blueprint(health.bp)
+    app.register_blueprint(uni.bp)
 
     @app.get("/")
     def index():

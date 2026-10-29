@@ -14,13 +14,14 @@
     <h1 class="board-name">HUB-01 <span class="board-sub">home hub · one room, no cloud</span></h1>
     <div class="header-tools">
       <!-- View switch: BOARD is the one-page device dashboard (all device
-           zones live there, never in a separate view); PLANNER (calendar +
-           to-do) and HEALTH (sleep/recovery, from Apple Health) are not
-           device lanes, so each gets its own layer instead of a board zone. -->
+           zones live there, never in a separate view); PLANNER (uni courses +
+           to-do), CALENDAR and HEALTH (sleep/recovery, from Apple Health) are
+           not device lanes, so each gets its own layer instead of a board zone. -->
       <div class="view-switch" role="group" aria-label="View">
         <span class="switch-group-label">VIEW</span>
-        <button class="view-btn active" data-view="board" aria-pressed="true">Board</button>
+        <button class="view-btn active" data-view="board" aria-pressed="true">Room</button>
         <button class="view-btn" data-view="planner" aria-pressed="false">Planner</button>
+        <button class="view-btn" data-view="calendar" aria-pressed="false">Calendar</button>
         <button class="view-btn" data-view="health" aria-pressed="false">Health</button>
       </div>
       <!-- House mode (scene) switch — persistent in the header since a scene
@@ -333,62 +334,49 @@
 
 </div><!-- /view-board -->
 
-<!-- PLANNER view: local calendar (day/week/month time grid) + to-do list.
-     Its own backend module (app/planner.py) — nothing here touches the
-     device lanes. The calendar body is built entirely by app.js; adding an
-     event goes through the + button, a drag on the grid, or an empty month
-     cell — all opening #event-overlay below. -->
+<!-- PLANNER view: the uni course tracker (app/uni.py) over the two to-do
+     widgets (app/planner.py). Nothing here touches the device lanes. The
+     overview grid is built by app.js: one row per course, one column per
+     semester week, one pad per lecture/exercise slot — clicking a pad opens
+     #uni-item-overlay to mark it done or skipped. -->
 <div class="view" id="view-planner" hidden>
-  <div class="planner-grid">
 
-    <section class="zone">
-      <h2 class="zone-label">Calendar</h2>
-      <article class="card cal-card">
-        <div class="cal-toolbar">
-          <div class="detail-range" id="cal-view" role="group" aria-label="Calendar view">
-            <button class="range-btn" data-calview="day">Day</button>
-            <button class="range-btn active" data-calview="week">Week</button>
-            <button class="range-btn" data-calview="month">Month</button>
-          </div>
-          <div class="cal-nav" role="group" aria-label="Calendar navigation">
-            <button class="nav-btn" id="cal-prev" aria-label="Previous">‹</button>
-            <button class="nav-btn nav-today" id="cal-today">Today</button>
-            <button class="nav-btn" id="cal-next" aria-label="Next">›</button>
-          </div>
-          <h3 class="cal-title" id="cal-title"></h3>
-          <!-- SIZE is the physical size of the calendar window on the page: how
-               tall the grid box is, and how much page width the planner claims.
-               There was a second stepper here for SCALE (the height of one hour
-               inside that window); the hour height is now fixed at 28px in
-               styles.css (:root --cal-hour-px) and is no longer adjustable. -->
-          <div class="cal-zoom" role="group" aria-label="Calendar window size">
-            <span class="cal-zoom-cap">size</span>
-            <button class="nav-btn" id="cal-size-out" title="Smaller window" aria-label="Smaller window">−</button>
-            <span class="cal-zoom-label" id="cal-size-label">100%</span>
-            <button class="nav-btn" id="cal-size-in" title="Bigger window" aria-label="Bigger window">+</button>
-          </div>
-          <button class="nav-btn cal-zoom-reset" id="cal-size-reset" title="Reset size">reset</button>
-          <button class="add-btn" id="event-add-btn" title="Add event" aria-label="Add event">+</button>
+  <section class="zone">
+    <h2 class="zone-label">University</h2>
+    <article class="card uni-card">
+      <div class="uni-toolbar">
+        <div class="uni-heading">
+          <h3 class="task-card-title" id="uni-semester-name">Semester</h3>
+          <span class="uni-sub" id="uni-sub"></span>
         </div>
-        <div class="calendar" id="calendar"></div>
-        <!-- Two hints, one per input type, swapped in CSS on (pointer: coarse)
-             — dragging the grid to create is mouse-only, because on a touch
-             screen that gesture is the page scroll (see onGridPointerDown). -->
-        <p class="card-note cal-hint">
-          <span class="hint-pointer">Drag on the grid to block out a new event · click an event for details.</span>
-          <span class="hint-touch">Tap + to add an event · tap an event for details.</span>
-        </p>
-      </article>
-    </section>
+        <button class="nav-btn uni-semester-btn" id="uni-semester-btn" type="button"
+                title="Semester dates">semester</button>
+        <button class="add-btn" id="uni-add-btn" type="button"
+                title="Add course" aria-label="Add course">+</button>
+      </div>
+      <div class="uni-scroll" id="uni-scroll">
+        <div class="uni-grid" id="uni-grid"></div>
+      </div>
+      <ul class="uni-legend" aria-label="Legend">
+        <li><span class="uni-pad lg"></span>Open</li>
+        <li><span class="uni-pad lg is-due"></span>This week</li>
+        <li><span class="uni-pad lg is-overdue"></span>Overdue</li>
+        <li><span class="uni-pad lg is-done"></span>Done</li>
+        <li><span class="uni-pad lg is-skipped"></span>Didn't take place</li>
+        <li class="uni-legend-keys"><b>L</b> lecture · <b>E</b> exercise</li>
+      </ul>
+    </article>
+  </section>
 
-    <section class="zone" id="todo-zone">
-      <h2 class="zone-label">To-do</h2>
-      <!-- Two independent to-do widgets stacked in the right column, each its
-           own list, count, + button and add/edit row. app.js clones the
-           #task-card-tpl once per entry in TASK_LISTS and wires each up as a
-           self-contained TaskWidget; "university" is an exact match, "Life
-           stuff" is the catch-all so untagged tasks never vanish. -->
-    </section>
+  <section class="zone">
+    <h2 class="zone-label">To-do</h2>
+    <!-- Two independent to-do widgets side by side, each its own list,
+         count, + button and add/edit row. app.js clones the #task-card-tpl
+         once per entry in TASK_LISTS into #todo-grid and wires each up as a
+         self-contained TaskWidget; "university" is an exact match, "Life
+         stuff" is the catch-all so untagged tasks never vanish. -->
+    <div class="todo-grid" id="todo-grid"></div>
+  </section>
 
     <template id="task-card-tpl">
       <article class="card task-card">
@@ -418,8 +406,55 @@
       </article>
     </template>
 
-  </div>
 </div><!-- /view-planner -->
+
+<!-- CALENDAR view: local calendar (day/week/month time grid), alone in its
+     view so it can use the full page width. Its own backend module
+     (app/planner.py). The calendar body is built entirely by app.js; adding
+     an event goes through the + button, a drag on the grid, or an empty
+     month cell — all opening #event-overlay below. -->
+<div class="view" id="view-calendar" hidden>
+  <section class="zone">
+    <h2 class="zone-label">Calendar</h2>
+    <article class="card cal-card">
+      <div class="cal-toolbar">
+        <div class="detail-range" id="cal-view" role="group" aria-label="Calendar view">
+          <button class="range-btn" data-calview="day">Day</button>
+          <button class="range-btn active" data-calview="week">Week</button>
+          <button class="range-btn" data-calview="month">Month</button>
+        </div>
+        <div class="cal-nav" role="group" aria-label="Calendar navigation">
+          <button class="nav-btn" id="cal-prev" aria-label="Previous">‹</button>
+          <button class="nav-btn nav-today" id="cal-today">Today</button>
+          <button class="nav-btn" id="cal-next" aria-label="Next">›</button>
+        </div>
+        <h3 class="cal-title" id="cal-title"></h3>
+        <!-- SIZE is the physical size of the calendar window on the page: how
+             tall the grid box is, and how much page width the planner claims.
+             There was a second stepper here for SCALE (the height of one hour
+             inside that window); the hour height is now fixed at 28px in
+             styles.css (:root --cal-hour-px) and is no longer adjustable. -->
+        <div class="cal-zoom" role="group" aria-label="Calendar window size">
+          <span class="cal-zoom-cap">size</span>
+          <button class="nav-btn" id="cal-size-out" title="Smaller window" aria-label="Smaller window">−</button>
+          <span class="cal-zoom-label" id="cal-size-label">100%</span>
+          <button class="nav-btn" id="cal-size-in" title="Bigger window" aria-label="Bigger window">+</button>
+        </div>
+        <button class="nav-btn cal-zoom-reset" id="cal-size-reset" title="Reset size">reset</button>
+        <button class="add-btn" id="event-add-btn" title="Add event" aria-label="Add event">+</button>
+      </div>
+      <div class="calendar" id="calendar"></div>
+      <!-- Two hints, one per input type, swapped in CSS on (pointer: coarse)
+           — dragging the grid to create is mouse-only, because on a touch
+           screen that gesture is the page scroll (see onGridPointerDown). -->
+      <p class="card-note cal-hint">
+        <span class="hint-pointer">Drag on the grid to block out a new event · click an event for details.</span>
+        <span class="hint-touch">Tap + to add an event · tap an event for details.</span>
+      </p>
+    </article>
+  </section>
+
+</div><!-- /view-calendar -->
 
 <!-- HEALTH view: sleep/recovery scored from Apple Health data (pushed to
      /api/health/ingest by the Health Auto Export app). Structure follows the
@@ -729,6 +764,92 @@
         <span class="save-note" id="event-note" role="status"></span>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Uni course dialog: + on the overview adds a course, clicking a course
+     name edits it (and shows Delete). Lectures/exercises are per-week slot
+     counts; lowering one hides the marks beyond it rather than deleting. -->
+<div class="detail-overlay" id="uni-course-overlay" hidden>
+  <div class="detail-backdrop" data-close="uni-course"></div>
+  <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="uni-course-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="uni-course-title">New course</h3>
+        <code class="wire-key">UNI</code>
+      </div>
+      <button class="detail-close" data-close="uni-course" aria-label="Close">×</button>
+    </header>
+    <form id="uni-course-form" class="uni-form" autocomplete="off">
+      <input type="text" id="uni-course-name" class="event-title-input"
+             placeholder="Course name" required maxlength="120">
+      <div class="cat-picker" id="uni-course-color" role="group" aria-label="Colour"></div>
+      <div class="uni-count-rows">
+        <div class="uni-count-row">
+          <span class="uni-count-label">Lectures / week</span>
+          <span class="prio-seg uni-count" data-field="lectures" role="radiogroup" aria-label="Lectures per week"></span>
+        </div>
+        <div class="uni-count-row">
+          <span class="uni-count-label">Exercises / week</span>
+          <span class="prio-seg uni-count" data-field="exercises" role="radiogroup" aria-label="Exercises per week"></span>
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button type="submit" class="save-btn" id="uni-course-submit">Add course</button>
+        <button type="button" class="ghost-btn ghost-danger" id="uni-course-delete" hidden>Delete</button>
+        <span class="save-note" id="uni-course-note" role="status"></span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Semester dialog: when week 1 starts and how many weeks there are. The
+     start is snapped to its Monday server-side. -->
+<div class="detail-overlay" id="uni-semester-overlay" hidden>
+  <div class="detail-backdrop" data-close="uni-semester"></div>
+  <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="uni-semester-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="uni-semester-title">Semester</h3>
+        <code class="wire-key">UNI</code>
+      </div>
+      <button class="detail-close" data-close="uni-semester" aria-label="Close">×</button>
+    </header>
+    <form id="uni-semester-form" class="uni-form" autocomplete="off">
+      <input type="text" id="uni-sem-name" class="event-title-input"
+             placeholder="Name, e.g. Autumn 2026" required maxlength="60">
+      <div class="event-fields">
+        <label>Week 1 starts <input type="date" id="uni-sem-start" required></label>
+        <label>Weeks <input type="number" id="uni-sem-weeks" min="1" max="30" required></label>
+      </div>
+      <div class="settings-actions">
+        <button type="submit" class="save-btn">Save</button>
+        <span class="save-note" id="uni-sem-note" role="status"></span>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Uni slot dialog: clicking a lecture/exercise pad. Done, or "didn't
+     take place" (skipped — it leaves the course's total instead of counting
+     against you), or back to open. -->
+<div class="detail-overlay" id="uni-item-overlay" hidden>
+  <div class="detail-backdrop" data-close="uni-item"></div>
+  <div class="detail-panel settings-panel uni-item-panel" role="dialog" aria-modal="true" aria-labelledby="uni-item-title">
+    <header class="detail-head">
+      <div class="detail-title-group">
+        <h3 class="detail-title" id="uni-item-title">Lecture</h3>
+        <code class="wire-key" id="uni-item-key">W1</code>
+      </div>
+      <button class="detail-close" data-close="uni-item" aria-label="Close">×</button>
+    </header>
+    <p class="settings-hint" id="uni-item-sub"></p>
+    <div class="uni-item-actions">
+      <button type="button" class="save-btn" data-status="done">Done</button>
+      <button type="button" class="ghost-btn" data-status="skipped">Didn't take place</button>
+      <button type="button" class="ghost-btn" data-status="open">Mark open</button>
+    </div>
+    <span class="save-note" id="uni-item-note" role="status"></span>
   </div>
 </div>
 

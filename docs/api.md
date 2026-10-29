@@ -337,6 +337,32 @@ distinct from all-day.
   keeps the original `completed_at`).
 - `DELETE /tasks/:id` → `{"deleted": id}`.
 
+## University courses
+
+A self-contained module (`app/uni.py` — own tables, own blueprint under
+`/api/uni`). A course declares lectures and exercises **per week**; each
+(week, kind, idx) slot is `open` until marked `done` or `skipped` (it didn't
+take place). Weeks are 1-based against the semester's start Monday. Every
+endpoint below returns the whole overview (same shape as `GET /uni`), so a
+client re-renders from the reply.
+
+- `GET /uni` → `{"semester": {name, start, weeks, current_week}, "courses": [...]}`.
+  `current_week` can be `< 1` before the semester or `> weeks` after it. Each
+  course: `{id, name, color, lectures, exercises, marks: [{week, kind, idx, status}],
+  done, skipped, total}` — `total` is `weeks × (lectures + exercises) − skipped`.
+  Marks outside the course's current shape are omitted and not counted (they are
+  kept in the table, so growing the course back restores them).
+- `PUT /uni/semester` → partial `{"name", "start", "weeks"}`; `start` is any
+  `"YYYY-MM-DD"` in week 1 and is snapped to its Monday; `weeks` 1–30.
+- `POST /uni/courses` → `201`. Body `{"name", "color"?, "lectures"?, "exercises"?}`
+  — counts 0–5 (default 1); `color` one of `blue`/`green`/`violet`/`amber`/`orange`
+  (default: next in rotation).
+- `PUT /uni/courses/:id` → partial update of the POST fields.
+- `DELETE /uni/courses/:id` → removes the course and all its marks.
+- `PUT /uni/courses/:id/marks` → body `{"week", "kind": "lecture"|"exercise",
+  "idx", "status": "done"|"skipped"|"open"}`; `open` clears the mark. A slot
+  outside the course's current shape is a 400.
+
 ## Health (sleep / recovery)
 
 A self-contained module (`app/health.py` — own tables, own blueprint under
